@@ -1,0 +1,7 @@
+espn-api
+nfl-data-py
+anthropic
+openai
+chromadb
+feedparser
+python-dotenv
