@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Waiver Wire Oracle — a personal fantasy football assistant for one ESPN league. It combines ESPN league data, nflverse player stats, and RAG over NFL news RSS feeds, queried by an LLM agent with tool-calling. Everything runs locally against a single SQLite file and a local Chroma vector store; there is no server/website yet (planned, not started — `main.py` is currently just a stub).
+Waiver Wire Oracle — a personal fantasy football assistant for one ESPN league. It combines ESPN league data, nflverse player stats, and RAG over NFL news RSS feeds, queried by an LLM agent with tool-calling. Everything runs locally against a single SQLite file and a local Chroma vector store; there is no server/website yet (planned, not started).
 
 ## Commands
 
@@ -14,10 +14,17 @@ python3 -m venv venv          # use Python 3.11 — nfl-data-py's pandas pin has
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Ingest (run in this order the first time; each is independently idempotent/re-runnable)
-python3 ingest/espn_sync.py                    # -> teams, rosters, matchups tables
-python3 ingest/stats_sync.py [year ...]         # -> player_stats table; defaults to ESPN_SEASON
-python3 ingest/news_sync.py [feed_url ...]      # -> Chroma "nfl_news" collection; defaults to RSS_FEED_URLS
+# Ingest, via the CLI entrypoint (each source is independently idempotent/re-runnable;
+# main.py sync runs every source even if one fails, and reports per-source pass/fail)
+python3 main.py sync                            # all three: espn, stats, news
+python3 main.py sync espn stats                 # a subset
+python3 main.py sync stats --years 2024 2025    # stats defaults to ESPN_SEASON if omitted
+python3 main.py sync news --feeds <url> <url>   # news defaults to RSS_FEED_URLS if omitted
+
+# Or run an ingest script directly (bypasses main.py, same effect, no failure isolation)
+python3 ingest/espn_sync.py
+python3 ingest/stats_sync.py [year ...]
+python3 ingest/news_sync.py [feed_url ...]
 
 # Query tools directly (each is also usable as a standalone CLI for debugging)
 python3 tools/query_stats.py --player "Josh Allen" --season 2024 --week-min 14 --week-max 15
@@ -25,7 +32,7 @@ python3 tools/query_roster.py --view matchup --team "Herb"
 python3 tools/search_news.py "mccaffrey injury" --since-days 3
 
 # Run the agent
-python3 agent/chat.py
+python3 main.py chat        # or: python3 agent/chat.py
 ```
 
 There is no test suite, linter, or build step configured yet.
@@ -57,3 +64,5 @@ All config (league ID, ESPN cookies, DB/Chroma paths, RSS feeds, model settings)
 **`tools/*.py`** — each exposes the same two-symbol interface: `TOOL_SCHEMA` (a tool definition dict: `name`/`description`/`input_schema`) and `run_tool(tool_input: dict)`. `query_stats.py` validates `sort_by` against an allow-list before interpolating it into SQL (it's a column identifier, can't be parameterized) — extend that allow-list rather than removing the check if adding sortable columns.
 
 **`agent/chat.py`** — a manual tool-calling loop against **OpenRouter** (OpenAI-compatible Chat Completions API), defaulting to `qwen/qwen3.7-flash` via `config.OPENROUTER_MODEL`. Each `TOOL_SCHEMA`'s `input_schema` is adapted to OpenAI's `{"type": "function", "function": {...}}` shape by `_to_openai_tool()` at call time, since the tool schemas keep the simpler `name`/`description`/`input_schema` shape rather than OpenAI's nested one.
+
+**`main.py`** — the CLI entrypoint, with `sync` and `chat` subcommands. `cmd_sync()` runs each requested target (`espn`/`stats`/`news`) independently and catches exceptions per-target rather than letting one failure abort the rest — this matters in practice, since `stats` will legitimately fail before nflverse publishes a season's data while `espn`/`news` still succeed. Note: the `targets` positional arg intentionally has no `choices=` on its `argparse` definition — `nargs="*"` combined with `choices` throws on zero arguments (argparse validates the empty list itself against `choices`), so target validation is done manually against `SYNC_TARGETS` instead.

@@ -67,11 +67,20 @@ Fill in `.env`:
 
 ```bash
 # Sync your data (re-run any time to refresh)
+python3 main.py sync
+
+# Chat with the agent
+python3 main.py chat
+```
+
+`main.py sync` runs all three ingest sources and keeps going even if one fails (e.g. stats syncing has nothing to pull before the season starts) — it reports per-source success/failure and exits non-zero only if something actually failed. Sync a subset instead with `python3 main.py sync espn stats`, pass explicit stats years with `--years 2024 2025`, or override the RSS feeds for one run with `--feeds <url> <url>`.
+
+Each ingest/agent script is also runnable directly if you want to bypass `main.py` (e.g. for debugging one source in isolation):
+
+```bash
 python3 ingest/espn_sync.py
 python3 ingest/stats_sync.py
 python3 ingest/news_sync.py
-
-# Chat with the agent
 python3 agent/chat.py
 ```
 
@@ -108,11 +117,11 @@ waiver-wire-oracle/
 │   └── search_news.py       # vector search: NFL news (RAG retrieval)
 ├── agent/
 │   └── chat.py               # tool-calling chat loop
-└── main.py                   # CLI entrypoint (not yet implemented)
+└── main.py                   # CLI entrypoint (sync + chat subcommands)
 ```
 
-Each `tools/*.py` file also works as a standalone CLI for testing — run any of them with `--help` (or `-h`) to see its arguments.
+Each `tools/*.py` file also works as a standalone CLI for testing — run any of them with `--help` (or `-h`) to see its arguments. Same for `main.py` (`python3 main.py --help`, `python3 main.py sync --help`).
 
 ## Status
 
-This is an active personal project. Currently implemented: ESPN/stats/news ingestion, SQL and vector-search query tools, and a terminal chat agent. Not yet built: `main.py` as a proper CLI entrypoint, and a web front end (planned).
+This is an active personal project. Currently implemented: ESPN/stats/news ingestion, SQL and vector-search query tools, a terminal chat agent, and a unified `main.py` CLI. Not yet built: a web front end (planned).
