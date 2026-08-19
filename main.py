@@ -53,6 +53,12 @@ def cmd_chat(args: argparse.Namespace) -> None:
     chat.chat_loop()
 
 
+def cmd_serve(args: argparse.Namespace) -> None:
+    import uvicorn
+
+    uvicorn.run("api.main:app", host="0.0.0.0", port=args.port, reload=args.reload)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="waiver-wire-oracle", description="Waiver Wire Oracle CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -73,6 +79,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     chat_parser = subparsers.add_parser("chat", help="Start the chat agent")
     chat_parser.set_defaults(func=cmd_chat)
+
+    serve_parser = subparsers.add_parser("serve", help="Run the web app (API + frontend)")
+    serve_parser.add_argument("--port", type=int, default=8000)
+    serve_parser.add_argument("--reload", action="store_true", help="Auto-reload on code changes")
+    serve_parser.set_defaults(func=cmd_serve)
 
     return parser
 

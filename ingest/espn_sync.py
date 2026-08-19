@@ -201,7 +201,8 @@ def run() -> None:
         for team in league.teams:
             sync_roster(conn, team)
 
-        sync_matchups(conn, league, league.current_week, self_team_id)
+        for week in range(1, league.current_week + 1):
+            sync_matchups(conn, league, week, self_team_id)
         conn.commit()
     finally:
         conn.close()
@@ -215,7 +216,7 @@ if __name__ == "__main__":
     total_players = sum(len(t.roster) for t in league.teams)
     print(f"Synced {len(league.teams)} teams.")
     print(f"Synced rosters for all {len(league.teams)} teams ({total_players} players total).")
-    print(f"Synced matchups for week {league.current_week}.")
+    print(f"Synced matchups for weeks 1-{league.current_week}.")
 
     if self_team_id is None:
         print("Could not match ESPN_SWID to a team in this league; self-team flag not set.")

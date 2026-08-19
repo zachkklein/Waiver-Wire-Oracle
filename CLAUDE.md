@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Waiver Wire Oracle — a personal fantasy football assistant for one ESPN league. It combines ESPN league data, nflverse player stats, and RAG over NFL news RSS feeds, queried by an LLM agent with tool-calling. Everything runs locally against a single SQLite file and a local Chroma vector store; there is no server/website yet (planned, not started).
+Waiver Wire Oracle — a personal fantasy football assistant for one ESPN league. It combines ESPN league data, nflverse player stats, and RAG over NFL news RSS feeds, queried by an LLM agent with tool-calling. Everything runs locally against a single SQLite file and a local Chroma vector store. A FastAPI + React web app (`api/`, `frontend/`) sits on top of the same CLI tools/agent for browsing the league and chatting with the Oracle in a browser.
 
 ## Commands
 
@@ -33,9 +33,14 @@ python3 tools/search_news.py "mccaffrey injury" --since-days 3
 
 # Run the agent
 python3 main.py chat        # or: python3 agent/chat.py
+
+# Run the web app
+python3 main.py serve --reload   # FastAPI on :8000 (serves frontend/dist in production)
+cd frontend && npm install && npm run dev   # Vite dev server on :5173, proxies /api to :8000
+cd frontend && npm run build                # production build, served by main.py serve
 ```
 
-There is no test suite, linter, or build step configured yet.
+There is no test suite or linter configured for the Python side yet. The frontend has `tsc -b` as part of `npm run build`.
 
 ## Architecture
 
@@ -51,6 +56,10 @@ query_roster.py, query_stats.py ─→ read data/db.sqlite
 search_news.py                  ─→ read data/chroma/ (RAG retrieval)
 
 agent/chat.py ─→ orchestrates all three tools via an LLM tool-calling loop
+
+api/*.py       ─→ FastAPI wrappers around tools/*.py + a streaming variant of
+                   agent/chat.py's tool loop (api/chat_service.py), for the web UI
+frontend/src   ─→ React/Vite app consuming api/*.py over /api/*
 ```
 
 All config (league ID, ESPN cookies, DB/Chroma paths, RSS feeds, model settings) is centralized in `config.py`, which loads from `.env` (see `.env.example`). Every script does `sys.path.insert(...)` + `import config` so any file can be run directly from its own directory, not just from repo root.
@@ -65,4 +74,8 @@ All config (league ID, ESPN cookies, DB/Chroma paths, RSS feeds, model settings)
 
 **`agent/chat.py`** — a manual tool-calling loop against **OpenRouter** (OpenAI-compatible Chat Completions API), defaulting to `qwen/qwen3.7-flash` via `config.OPENROUTER_MODEL`. Each `TOOL_SCHEMA`'s `input_schema` is adapted to OpenAI's `{"type": "function", "function": {...}}` shape by `_to_openai_tool()` at call time, since the tool schemas keep the simpler `name`/`description`/`input_schema` shape rather than OpenAI's nested one.
 
-**`main.py`** — the CLI entrypoint, with `sync` and `chat` subcommands. `cmd_sync()` runs each requested target (`espn`/`stats`/`news`) independently and catches exceptions per-target rather than letting one failure abort the rest — this matters in practice, since `stats` will legitimately fail before nflverse publishes a season's data while `espn`/`news` still succeed. Note: the `targets` positional arg intentionally has no `choices=` on its `argparse` definition — `nargs="*"` combined with `choices` throws on zero arguments (argparse validates the empty list itself against `choices`), so target validation is done manually against `SYNC_TARGETS` instead.
+**`main.py`** — the CLI entrypoint, with `sync`, `chat`, and `serve` subcommands. `cmd_sync()` runs each requested target (`espn`/`stats`/`news`) independently and catches exceptions per-target rather than letting one failure abort the rest — this matters in practice, since `stats` will legitimately fail before nflverse publishes a season's data while `espn`/`news` still succeed. Note: the `targets` positional arg intentionally has no `choices=` on its `argparse` definition — `nargs="*"` combined with `choices` throws on zero arguments (argparse validates the empty list itself against `choices`), so target validation is done manually against `SYNC_TARGETS` instead.
+
+**`api/`** — FastAPI app for the web UI, no auth (single-user personal app). `api/routers/{league,stats,news,meta}.py` are thin wrappers that call straight into `tools/*.py`'s plain Python functions (not through the `TOOL_SCHEMA`/`run_tool` LLM-tool interface — that's only for the agent). `api/routers/chat.py` + `api/chat_service.py` reuse `agent.chat.SYSTEM_PROMPT`/`TOOLS`/`execute_tool` but reimplement the completion loop with `stream=True`, buffering `delta.tool_calls` by index across chunks (id/name/arguments each arrive split across multiple deltas) since OpenRouter's streaming tool-call format can't be handled by the CLI's non-streaming `run_turn`. The endpoint streams newline-delimited JSON events (`token`/`tool_call`/`tool_result`/`done`/`error`); the frontend is stateless server-side and resends the full message history each turn. In production `api/main.py` mounts `frontend/dist` as static files, so `main.py serve` alone serves the whole app.
+
+**`frontend/`** — Vite + React + TypeScript + Tailwind v4. `src/lib/api.ts` has one fetch wrapper per `api/` endpoint plus `streamChat()`, an async generator that reads the ndjson chat stream. The chat system prompt asks the model for `##`-prefixed markdown headers, but smaller models don't always comply — `src/components/ChatMessage.tsx`'s `normalizeHeaders()` rewrites known plain-text header lines to markdown before rendering, so the three-section format (Changes to Starters / Waiver Wire Moves / People to Keep Your Eye On) still renders correctly either way. Assistant messages render via `react-markdown` + `remark-gfm` (tables, autolinks) with a full set of themed component overrides (headings, lists, links, code, blockquotes, tables) in `ChatMessage.tsx` — extend that `markdownComponents` map rather than letting new markdown constructs fall back to unstyled defaults.
