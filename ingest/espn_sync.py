@@ -54,8 +54,12 @@ CREATE TABLE IF NOT EXISTS matchups (
 
 def get_league() -> League:
     if not config.ESPN_LEAGUE_ID or not config.ESPN_SEASON:
-        raise RuntimeError("ESPN_LEAGUE_ID and ESPN_SEASON must be set in .env")
+        raise RuntimeError(
+            "League ID and season are required — set them in the app's Setup page, or "
+            "ESPN_LEAGUE_ID/ESPN_SEASON in .env"
+        )
 
+    # espn_s2/swid are only needed for private leagues; public ones load fine as None.
     return League(
         league_id=int(config.ESPN_LEAGUE_ID),
         year=int(config.ESPN_SEASON),
@@ -69,6 +73,17 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 
 def find_self_team_id(league: League) -> int | None:
+    """Identify the user's own team. An explicitly configured team wins — public
+    leagues have no cookies to match against, so ESPN_TEAM_ID is the only signal."""
+    explicit = config.ESPN_TEAM_ID
+    if explicit:
+        try:
+            team_id = int(explicit)
+        except ValueError:
+            team_id = None
+        if team_id is not None and any(t.team_id == team_id for t in league.teams):
+            return team_id
+
     swid = (config.ESPN_SWID or "").strip().strip("{}").lower()
     if not swid:
         return None

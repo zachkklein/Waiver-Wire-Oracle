@@ -4,6 +4,8 @@ A personal fantasy football assistant that combines your ESPN league data, NFL p
 
 It runs entirely locally — a Python backend backed by SQLite and a local vector store, with an LLM agent that answers questions by calling tools rather than guessing from training data. You can use it as a terminal chat agent or through a local web app (FastAPI + React) that adds a dashboard for your roster, matchups, standings, player stats, and news alongside the same chat agent, streamed and rendered as markdown.
 
+It's built to be **self-hosted**: clone it, run it, and point it at your own league from a setup screen in the browser — no config files to edit, and your ESPN credentials never leave your machine.
+
 ## How it works
 
 Three ingest scripts pull data from external sources into local storage. Three tool modules read that storage and expose it to an LLM. An agent loop ties the tools together with a chat interface.
@@ -27,54 +29,66 @@ frontend/src   ──▶  React web app (dashboard + chat) that talks to api/*.p
 - **`ingest/stats_sync.py`** — pulls weekly NFL player stats (yardage, TDs, targets, fantasy points) via [`nfl-data-py`](https://github.com/nflverse/nfl_data_py).
 - **`ingest/news_sync.py`** — pulls NFL news from RSS feeds, chunks it, and embeds it into a local [Chroma](https://www.trychroma.com/) vector store using Chroma's bundled local embedding model (no external embedding API needed). This is the RAG component: `search_news` retrieves relevant article snippets by semantic similarity, and the agent uses them as grounded context instead of relying on its own (possibly stale) knowledge.
 - **`agent/chat.py`** — a terminal chat loop. On each turn, the LLM decides whether it needs to call `query_stats`, `query_roster`, or `search_news`, executes the call, and reasons over the result before responding.
-- **`api/`** — a FastAPI app exposing the same tools as a JSON API (`/api/roster`, `/api/stats`, `/api/matchups`, `/api/teams`, `/api/news`, `/api/meta`) plus a streaming `/api/chat` endpoint that reuses `agent/chat.py`'s system prompt and tools.
-- **`frontend/`** — a React + Vite + TypeScript app: a dashboard (your team, matchup, standings), roster/matchup/standings/player/news pages, and an "Oracle" chat page that streams the agent's responses and renders them as markdown.
+- **`api/`** — a FastAPI app exposing the same tools as a JSON API (`/api/roster`, `/api/stats`, `/api/matchups`, `/api/teams`, `/api/news`, `/api/meta`), a streaming `/api/chat` endpoint that reuses `agent/chat.py`'s system prompt and tools, and `/api/settings` + `/api/sync` behind the Setup page.
+- **`frontend/`** — a React + Vite + TypeScript app: a dashboard (your team, matchup, standings), roster/matchup/standings/player/news pages, an "Oracle" chat page that streams the agent's responses and renders them as markdown, and a Setup page for connecting your league and running syncs.
 
 All three ingest scripts are safe to re-run — they upsert rather than duplicate, so you can re-sync as often as you like (e.g. weekly, or before each waiver decision).
 
 ## Getting started
 
+This is designed to be self-hosted: you run your own copy against your own league, and nothing leaves your machine except calls to ESPN, nflverse, your RSS feeds, and your chosen LLM provider.
+
 ### Prerequisites
 
 - Python 3.11 (nfl-data-py's pandas dependency has no prebuilt wheel for 3.13 — use 3.11)
-- An ESPN fantasy football league
-- An API key for the LLM provider you want to use (see [Choosing a model](#choosing-a-model))
+- Node 18+ (for the web app)
+- An ESPN fantasy football league — public leagues need nothing but the league ID
+- An [OpenRouter](https://openrouter.ai) API key, if you want the Oracle chat page
 
-### Installation
+### Install and run
 
 ```bash
+git clone <your-fork-url> waiver-wire-oracle
+cd waiver-wire-oracle
+
 python3.11 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
+cd frontend && npm install && npm run build && cd ..
+python3 main.py serve
 ```
 
-### Configuration
+Open `http://localhost:8000`. On a fresh install you'll land on the **Setup** page — enter your league there and click through. No config files to edit.
 
-```bash
-cp .env.example .env
-```
+### Setup page
 
-Fill in `.env`:
-
-| Variable | Required | Description |
+| Field | Needed? | Where it comes from |
 |---|---|---|
-| `ESPN_LEAGUE_ID` | Yes | From your league URL: `fantasy.espn.com/football/team?leagueId=XXXXXXX` |
-| `ESPN_SEASON` | Yes | League year, e.g. `2026` |
-| `ESPN_SWID` | Private leagues only | `SWID` cookie from a logged-in fantasy.espn.com session |
-| `ESPN_S2` | Private leagues only | `espn_s2` cookie from the same session |
-| `OPENROUTER_API_KEY` | Yes (default setup) | From [openrouter.ai](https://openrouter.ai) → Keys |
-| `OPENROUTER_MODEL` | No | Defaults to `qwen/qwen3.7-flash` |
-| `RSS_FEED_URLS` | Yes | Comma-separated NFL news RSS feed URLs |
+| League ID | Always | Your league URL: `fantasy.espn.com/football/team?leagueId=XXXXXXX` |
+| Season | Always | The year you want to load, e.g. `2026` |
+| SWID / espn_s2 | **Private leagues only** | DevTools → Application → Cookies → `fantasy.espn.com`, while signed in |
+| Your team | Public leagues | Pick from the list after clicking **Connect league** |
+| OpenRouter key | For the Oracle only | [openrouter.ai](https://openrouter.ai) → Keys |
+| News feeds | Optional | Four NFL feeds are preconfigured; edit the list to taste |
 
-`ESPN_SWID`/`ESPN_S2` are found via your browser's dev tools (Application → Cookies → fantasy.espn.com) while logged into your league.
+**Public leagues need no cookies at all.** Enter the league ID and season, hit *Connect league*, and choose which team is yours. Private leagues need the two cookies so ESPN will return the league — those are stored locally in `data/settings.json` (gitignored) and are only ever sent to ESPN.
 
-### Running it
+Then hit **Sync everything** on the same page to pull in your league, player stats, and news. Player stats and news take a minute on the first run.
+
+### Configuring without the UI
+
+Every setting also reads from environment variables / `.env`, which is handy for headless or container setups — copy `.env.example` to `.env` and fill in `ESPN_LEAGUE_ID`, `ESPN_SEASON`, `ESPN_SWID`, `ESPN_S2`, `ESPN_TEAM_ID`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `RSS_FEED_URLS` (comma-separated). Anything saved from the Setup page takes precedence over `.env`. Set `DATA_DIR` to move the SQLite file, Chroma store, and settings somewhere else (e.g. a mounted volume).
+
+### Refreshing your data
+
+Re-sync whenever you want fresher data — weekly, or before each waiver decision. Either hit **Sync everything** on the Setup page, or use the CLI:
 
 ```bash
-# Sync your data (re-run any time to refresh)
+# Sync all three sources (re-run any time)
 python3 main.py sync
 
-# Chat with the agent in the terminal
+# Chat with the agent in the terminal instead of the browser
 python3 main.py chat
 ```
 
@@ -118,17 +132,18 @@ Oracle:   [query_stats({"player_name": "Kenny Gainwell", ...})]
 
 ## Choosing a model
 
-`agent/chat.py` talks to [OpenRouter](https://openrouter.ai)'s OpenAI-compatible Chat Completions API, so you can point it at nearly any model OpenRouter offers, including free/cheap ones, by changing `OPENROUTER_MODEL` in `.env`. The default, `qwen/qwen3.7-flash`, is inexpensive and supports tool calling well.
+`agent/chat.py` talks to [OpenRouter](https://openrouter.ai)'s OpenAI-compatible Chat Completions API, so you can point it at nearly any model OpenRouter offers, including free/cheap ones — change the model on the Setup page (or `OPENROUTER_MODEL` in `.env`). The default, `qwen/qwen3.7-flash`, is inexpensive and supports tool calling well. Pick a model that supports tool calling; the agent relies on it for every answer.
 
 ## Project structure
 
 ```
 waiver-wire-oracle/
-├── .env                  # your local config (gitignored)
-├── config.py              # loads .env into shared constants (paths, keys, league ID)
-├── data/
-│   ├── db.sqlite           # teams, rosters, matchups, player_stats (gitignored)
-│   └── chroma/              # embedded news vector store (gitignored)
+├── .env                  # optional config for headless setups (gitignored)
+├── config.py              # resolves settings: settings.json -> .env -> defaults
+├── data/                  # all gitignored
+│   ├── settings.json       # written by the Setup page (league ID, cookies, API key)
+│   ├── db.sqlite           # teams, rosters, matchups, player_stats
+│   └── chroma/              # embedded news vector store
 ├── ingest/
 │   ├── espn_sync.py         # ESPN league → SQLite
 │   ├── stats_sync.py        # nflverse stats → SQLite
@@ -142,9 +157,9 @@ waiver-wire-oracle/
 ├── api/
 │   ├── main.py                # FastAPI app (mounts routers + serves frontend/dist in prod)
 │   ├── chat_service.py         # streaming version of agent/chat.py's tool loop
-│   └── routers/                # league.py, stats.py, news.py, meta.py, chat.py
+│   └── routers/                # league, stats, news, meta, chat, settings
 ├── frontend/
-│   ├── src/pages/               # Dashboard, Roster, Matchups, Standings, Players, News, Chat
+│   ├── src/pages/               # Dashboard, Roster, Matchups, Standings, Players, News, Chat, Setup
 │   ├── src/components/          # shared UI (badges, cards, chat bubbles, markdown rendering)
 │   └── src/lib/                 # api.ts (fetch wrappers), types.ts
 └── main.py                   # CLI entrypoint (sync, chat, serve subcommands)
@@ -154,4 +169,8 @@ Each `tools/*.py` file also works as a standalone CLI for testing — run any of
 
 ## Status
 
-This is an active personal project. Currently implemented: ESPN/stats/news ingestion, SQL and vector-search query tools, a terminal chat agent, a unified `main.py` CLI, and a local web app (FastAPI + React) covering the dashboard, roster, matchups, standings, players, news, and a streaming chat page. Not yet built: authentication and deployment configuration (it's designed to run locally for a single user).
+This is an active personal project, built to be cloned and self-hosted. Currently implemented: ESPN/stats/news ingestion, SQL and vector-search query tools, a terminal chat agent, a unified `main.py` CLI, a local web app (FastAPI + React) covering the dashboard, roster, matchups, standings, players, news, and a streaming chat page, and an in-app Setup page so a fresh clone can be configured entirely from the browser.
+
+Not built, by design: there's **no authentication and no multi-user support** — it assumes one person running one copy against one league, and anyone who can reach the URL gets full access to your league data and can spend your OpenRouter credits. Don't expose it to the open internet without putting something in front of it (a private network like Tailscale, or an identity proxy like Cloudflare Access).
+
+Worth knowing: ESPN publishes no official fantasy API. `espn-api` works against undocumented internal endpoints, so ESPN can change or block them without notice, and there's no "Sign in with ESPN" to integrate — private leagues require copying two cookies by hand.

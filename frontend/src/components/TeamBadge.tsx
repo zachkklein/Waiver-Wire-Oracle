@@ -1,14 +1,12 @@
-const PALETTE = ["#2fe08a", "#3b82f6", "#ef4444", "#f97316", "#a855f7", "#eab308", "#14b8a6", "#f472b6"]
+// Muted, turf-compatible tones — distinct enough to tell teams apart
+// without competing with brass for attention.
+const PALETTE = ["#d9a93f", "#5b9dd9", "#e2574c", "#57c08a", "#a98bd1", "#e08a3c", "#4fb0a8", "#c2708f"]
 
 function initials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean)
   if (words.length === 0) return "?"
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
   return (words[0][0] + words[1][0]).toUpperCase()
-}
-
-function colorFor(seed: number): string {
-  return PALETTE[seed % PALETTE.length]
 }
 
 export default function TeamBadge({
@@ -20,12 +18,14 @@ export default function TeamBadge({
   seed: number
   size?: "sm" | "md" | "lg"
 }) {
-  const dims = size === "sm" ? "h-7 w-7 text-xs" : size === "lg" ? "h-12 w-12 text-lg" : "h-9 w-9 text-sm"
-  const color = colorFor(seed)
+  const dims =
+    size === "sm" ? "h-9 w-9 text-xs" : size === "lg" ? "h-14 w-14 text-lg" : "h-11 w-11 text-sm"
+
   return (
     <div
-      className={`flex shrink-0 items-center justify-center rounded-full font-display font-bold text-bg ${dims}`}
-      style={{ backgroundColor: color }}
+      aria-hidden
+      className={`flex shrink-0 items-center justify-center rounded-full font-bold text-bg ${dims}`}
+      style={{ backgroundColor: PALETTE[seed % PALETTE.length] }}
     >
       {initials(name)}
     </div>

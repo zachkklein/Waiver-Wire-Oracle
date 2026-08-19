@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from api.routers import chat, league, meta, news, stats
+from api.routers import chat, league, meta, news, settings, stats
 
 app = FastAPI(title="Waiver Wire Oracle")
 
@@ -20,7 +20,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for router in (league.router, stats.router, news.router, meta.router, chat.router):
+for router in (
+    league.router,
+    stats.router,
+    news.router,
+    meta.router,
+    chat.router,
+    settings.router,
+):
     app.include_router(router)
 
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")

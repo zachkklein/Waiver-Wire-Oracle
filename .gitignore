@@ -6,6 +6,7 @@ __pycache__/
 
 data/db.sqlite
 data/chroma/
+data/settings.json
 
 .DS_Store
 *.egg-info/

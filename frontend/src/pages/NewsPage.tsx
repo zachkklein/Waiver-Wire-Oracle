@@ -1,7 +1,20 @@
 import { useState } from "react"
 import { api } from "../lib/api"
 import type { NewsResult } from "../lib/types"
+import PageHeader from "../components/PageHeader"
 import { LoadingState, ErrorState, EmptyState } from "../components/EmptyState"
+
+const SUGGESTIONS = ["injury report", "waiver wire pickups", "backfield committee", "snap counts"]
+
+// RSS chunks usually open by repeating the headline — drop it so the snippet adds something.
+function trimSnippet(snippet: string, title: string): string {
+  const s = snippet.trim()
+  const t = title?.trim()
+  if (t && s.toLowerCase().startsWith(t.toLowerCase())) {
+    return s.slice(t.length).replace(/^[\s:–—-]+/, "")
+  }
+  return s
+}
 
 export default function NewsPage() {
   const [query, setQuery] = useState("")
@@ -9,43 +22,56 @@ export default function NewsPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const search = () => {
-    if (!query.trim()) return
+  const search = (q: string = query) => {
+    if (!q.trim()) return
+    setQuery(q)
     setLoading(true)
     setError(null)
     api
-      .news(query, { n_results: 10 })
+      .news(q, { n_results: 10 })
       .then(setResults)
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false))
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="font-display text-3xl font-bold text-text">News</h1>
+    <div>
+      <PageHeader title="News" eyebrow="Semantic search across your synced RSS feeds" />
 
-      <div className="flex gap-2">
+      <div className="mb-4 flex gap-3">
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && search()}
-          placeholder="Search injuries, roster moves, breakouts…"
-          className="flex-1 rounded-lg border border-border bg-surface px-3 py-2.5 text-sm text-text placeholder:text-text-faint focus:border-accent/50 focus:outline-none"
+          placeholder="Search injuries, roster moves, breakouts"
+          className="flex-1 rounded-full border border-border bg-surface px-5 py-3.5 text-sm text-text placeholder:text-text-faint focus:border-accent focus:outline-none"
         />
         <button
-          onClick={search}
-          className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
+          onClick={() => search()}
+          className="pressable rounded-full bg-accent px-7 text-sm font-bold text-bg hover:bg-accent-strong"
         >
           Search
         </button>
       </div>
 
+      <div className="mb-7 flex flex-wrap gap-2">
+        {SUGGESTIONS.map((s) => (
+          <button
+            key={s}
+            onClick={() => search(s)}
+            className="rounded-full bg-surface px-4 py-2 text-xs font-medium text-text-muted transition-colors hover:bg-surface-raised hover:text-accent"
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
       {error ? (
         <ErrorState message={error} />
       ) : loading ? (
-        <LoadingState />
+        <LoadingState message="Searching" />
       ) : results === null ? (
-        <EmptyState message="Search recent NFL news synced from RSS feeds." />
+        <EmptyState message="Search recent NFL news synced from your RSS feeds." />
       ) : results.length === 0 ? (
         <EmptyState message="No results." />
       ) : (
@@ -56,14 +82,19 @@ export default function NewsPage() {
               href={r.link}
               target="_blank"
               rel="noreferrer"
-              className="rounded-xl border border-border bg-surface p-4 transition-colors hover:border-accent/40"
+              className="group rounded-2xl border border-border bg-surface p-5 shadow-soft transition-all hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-lift"
             >
-              <div className="flex items-start justify-between gap-4">
-                <h3 className="font-medium text-text">{r.title}</h3>
-                <span className="shrink-0 text-xs text-text-faint">{r.published}</span>
+              <div className="mb-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
+                {r.source ? <span className="font-semibold text-accent">{r.source}</span> : null}
+                {r.source && r.published ? <span className="text-text-faint">·</span> : null}
+                {r.published ? <span className="text-text-faint">{r.published}</span> : null}
               </div>
-              <p className="mt-1.5 text-sm text-text-muted">{r.snippet}</p>
-              <div className="mt-2 text-xs text-accent">{r.source}</div>
+              <h3 className="font-display soft text-lg font-semibold leading-snug text-text group-hover:text-accent">
+                {r.title}
+              </h3>
+              <p className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-text-muted">
+                {trimSnippet(r.snippet, r.title)}
+              </p>
             </a>
           ))}
         </div>

@@ -36,7 +36,8 @@ level-2 headings (##) using exactly this text:
 ## Waiver Wire Moves
 ## People to Keep Your Eye On
 
-Under each header, use a short bullet list. Each bullet bolds the player's name \
+Under each header, use a short bullet list, one item per line, each line starting \
+with a hyphen and a space ("- "). Never use the "•" character. Each bullet bolds the player's name \
 (and, where relevant, the player being replaced) and gives at most one or two \
 sentences of reasoning (recent performance, matchup, injury news) — no more. If a \
 section has nothing to report, write "None this week." under that header rather \

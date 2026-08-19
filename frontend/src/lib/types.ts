@@ -92,6 +92,46 @@ export interface Meta {
   current_week: number | null
   synced_at: { teams: string | null; rosters: string | null; matchups: string | null }
   player_stats_rows: number
+  configured: boolean
+  has_data: boolean
+}
+
+export interface Settings {
+  ESPN_LEAGUE_ID: string
+  ESPN_SEASON: string
+  ESPN_TEAM_ID: string
+  OPENROUTER_MODEL: string
+  RSS_FEED_URLS: string[]
+  configured: boolean
+  has_espn_swid: boolean
+  has_espn_s2: boolean
+  has_openrouter_api_key: boolean
+}
+
+export interface SettingsPayload {
+  ESPN_LEAGUE_ID?: string
+  ESPN_SEASON?: string
+  ESPN_SWID?: string
+  ESPN_S2?: string
+  ESPN_TEAM_ID?: string
+  OPENROUTER_API_KEY?: string
+  OPENROUTER_MODEL?: string
+  RSS_FEED_URLS?: string[]
+}
+
+export interface LeaguePreview {
+  league_name: string | null
+  current_week: number
+  teams: { team_id: number; team_name: string }[]
+}
+
+export type SyncTarget = "espn" | "stats" | "news"
+
+export interface SyncStatus {
+  running: boolean
+  results: Record<string, { ok: boolean; detail: string; self_team_found?: boolean }>
+  started_at: string | null
+  finished_at: string | null
 }
 
 export interface ChatMsg {

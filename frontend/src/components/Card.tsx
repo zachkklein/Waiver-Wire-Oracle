@@ -5,21 +5,27 @@ export default function Card({
   action,
   children,
   className = "",
+  bodyClassName = "p-5",
 }: {
   title?: ReactNode
   action?: ReactNode
   children: ReactNode
   className?: string
+  bodyClassName?: string
 }) {
   return (
-    <div className={`rounded-xl border border-border bg-surface ${className}`}>
+    <section
+      className={`overflow-hidden rounded-2xl border border-border bg-surface shadow-soft ${className}`}
+    >
       {(title || action) && (
-        <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
-          {title && <h2 className="font-display text-base font-bold tracking-wide text-text">{title}</h2>}
+        <header className="flex items-center justify-between gap-4 px-5 pb-1 pt-5">
+          {title && (
+            <h2 className="font-display soft text-base font-semibold text-text">{title}</h2>
+          )}
           {action}
-        </div>
+        </header>
       )}
-      <div className="p-5">{children}</div>
-    </div>
+      <div className={bodyClassName}>{children}</div>
+    </section>
   )
 }

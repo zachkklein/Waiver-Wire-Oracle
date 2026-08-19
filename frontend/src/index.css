@@ -1,34 +1,45 @@
 @import "tailwindcss";
 
+/* ─────────────────────────────────────────────────────────────
+   Night Game — turf black, bone, trophy brass.
+   Soft geometry: rounded cards, pill controls, circular avatars.
+   Fraunces (SOFT axis up) carries the warmth in headings;
+   Plus Jakarta Sans handles all UI and figures.
+   ───────────────────────────────────────────────────────────── */
+
 @theme {
-  --font-sans: "Inter", system-ui, "Segoe UI", sans-serif;
-  --font-display: "Barlow Condensed", "Inter", system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
 
-  --color-bg: #090c11;
-  --color-surface: #12161f;
-  --color-surface-raised: #171c27;
-  --color-border: #232a38;
-  --color-border-strong: #313a4d;
+  --color-bg: #0a1310;
+  --color-surface: #111d18;
+  --color-surface-raised: #18271f;
+  --color-border: #21332b;
+  --color-border-strong: #2e4438;
 
-  --color-text: #e7ebf1;
-  --color-text-muted: #8b96a8;
-  --color-text-faint: #5b6577;
+  --color-text: #f2ecdd;
+  --color-text-muted: #a3b0a5;
+  --color-text-faint: #71806f;
 
-  --color-accent: #2fe08a;
-  --color-accent-strong: #1fc275;
-  --color-accent-dim: #163826;
+  --color-accent: #d9a93f;
+  --color-accent-strong: #eec464;
+  --color-accent-shade: #a97f24;
+  --color-accent-dim: #33280f;
 
-  --color-pos-qb: #ef4444;
-  --color-pos-rb: #22c55e;
-  --color-pos-wr: #3b82f6;
-  --color-pos-te: #f97316;
-  --color-pos-k: #a855f7;
-  --color-pos-dst: #64748b;
-  --color-pos-flex: #eab308;
+  --color-pos-qb: #e2574c;
+  --color-pos-rb: #57c08a;
+  --color-pos-wr: #5b9dd9;
+  --color-pos-te: #e08a3c;
+  --color-pos-k: #a98bd1;
+  --color-pos-dst: #7f9187;
+  --color-pos-flex: #d9a93f;
 
-  --color-status-bad: #ef4444;
-  --color-status-warn: #eab308;
-  --color-status-good: #2fe08a;
+  --color-status-bad: #e2574c;
+  --color-status-warn: #e0b23c;
+  --color-status-good: #57c08a;
+
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.3), 0 10px 30px -18px rgb(0 0 0 / 0.8);
+  --shadow-lift: 0 2px 4px rgb(0 0 0 / 0.3), 0 18px 40px -20px rgb(0 0 0 / 0.9);
 }
 
 html,
@@ -50,9 +61,37 @@ body {
   box-sizing: border-box;
 }
 
+/* Fraunces' soft axis — rounds the terminals so headings read warm, not carved. */
+@utility soft {
+  font-variation-settings:
+    "SOFT" 55,
+    "WONK" 0;
+  letter-spacing: -0.015em;
+}
+
+/* Duolingo-style tactile depth: the button sits on a shade and presses into it. */
+@utility pressable {
+  box-shadow: 0 3px 0 var(--color-accent-shade);
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    background-color 120ms ease;
+
+  &:active:not(:disabled) {
+    transform: translateY(3px);
+    box-shadow: 0 0 0 var(--color-accent-shade);
+  }
+}
+
 ::selection {
   background: var(--color-accent-dim);
-  color: var(--color-accent);
+  color: var(--color-accent-strong);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar {
@@ -67,4 +106,21 @@ body {
 ::-webkit-scrollbar-thumb {
   background: var(--color-border-strong);
   border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-accent) 45%, var(--color-border-strong));
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -1,11 +1,16 @@
 import type {
   ChatMsg,
   ChatStreamEvent,
+  LeaguePreview,
   Meta,
   MatchupsResponse,
   NewsResult,
   PlayerStatLine,
   RosterResponse,
+  Settings,
+  SettingsPayload,
+  SyncStatus,
+  SyncTarget,
   Team,
 } from "./types"
 
@@ -17,6 +22,20 @@ async function getJSON<T>(path: string, params: Record<string, unknown> = {}): P
   const query = qs.toString()
   const res = await fetch(`/api${path}${query ? `?${query}` : ""}`)
   if (!res.ok) throw new Error(`${path} failed: ${res.status}`)
+  return res.json()
+}
+
+async function sendJSON<T>(method: "POST" | "PUT", path: string, body: unknown): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    // FastAPI puts human-readable validation/HTTPException messages in `detail`.
+    const detail = await res.json().catch(() => null)
+    throw new Error(detail?.detail ?? `${path} failed: ${res.status}`)
+  }
   return res.json()
 }
 
@@ -39,6 +58,19 @@ export const api = {
   news: (query: string, params: { n_results?: number; source?: string; since_days?: number } = {}) =>
     getJSON<NewsResult[]>("/news", { query, ...params }),
   meta: () => getJSON<Meta>("/meta"),
+
+  settings: () => getJSON<Settings>("/settings"),
+  saveSettings: (payload: SettingsPayload) => sendJSON<Settings>("PUT", "/settings", payload),
+  leaguePreview: (payload: {
+    ESPN_LEAGUE_ID: string
+    ESPN_SEASON: string
+    ESPN_SWID?: string
+    ESPN_S2?: string
+  }) => sendJSON<LeaguePreview>("POST", "/settings/league-preview", payload),
+
+  startSync: (targets?: SyncTarget[]) =>
+    sendJSON<{ running: boolean; targets: string[] }>("POST", "/sync", { targets }),
+  syncStatus: () => getJSON<SyncStatus>("/sync"),
 }
 
 export async function* streamChat(messages: ChatMsg[]): AsyncGenerator<ChatStreamEvent> {

@@ -24,21 +24,22 @@ export default function ChatInput({
   }
 
   return (
-    <div className="flex items-end gap-2 border-t border-border bg-surface p-3">
+    <div className="flex items-end gap-3 border-t border-border bg-surface p-4">
       <textarea
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Ask about your roster, waiver targets, or matchups…"
+        placeholder="Ask about your roster, waiver targets, or matchups"
         rows={1}
-        className="max-h-32 flex-1 resize-none rounded-lg border border-border bg-surface-raised px-3 py-2.5 text-sm text-text placeholder:text-text-faint focus:border-accent/50 focus:outline-none"
+        disabled={disabled}
+        className="max-h-32 flex-1 resize-none rounded-2xl border border-border bg-surface-raised px-4 py-3 text-sm text-text placeholder:text-text-faint focus:border-accent focus:outline-none disabled:opacity-60"
       />
       <button
         onClick={submit}
         disabled={disabled || !value.trim()}
-        className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+        className="pressable rounded-full bg-accent px-6 py-3 text-sm font-bold text-bg hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
       >
-        Send
+        {disabled ? "Thinking" : "Send"}
       </button>
     </div>
   )

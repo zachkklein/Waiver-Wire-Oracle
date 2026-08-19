@@ -10,6 +10,7 @@ import StandingsPage from './pages/StandingsPage.tsx'
 import PlayersPage from './pages/PlayersPage.tsx'
 import NewsPage from './pages/NewsPage.tsx'
 import ChatPage from './pages/ChatPage.tsx'
+import SetupPage from './pages/SetupPage.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -23,6 +24,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="players" element={<PlayersPage />} />
           <Route path="news" element={<NewsPage />} />
           <Route path="chat" element={<ChatPage />} />
+          <Route path="setup" element={<SetupPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
