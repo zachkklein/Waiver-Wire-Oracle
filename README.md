@@ -60,7 +60,6 @@ Fill in `.env`:
 | `OPENROUTER_API_KEY` | Yes (default setup) | From [openrouter.ai](https://openrouter.ai) → Keys |
 | `OPENROUTER_MODEL` | No | Defaults to `qwen/qwen3.7-flash` |
 | `RSS_FEED_URLS` | Yes | Comma-separated NFL news RSS feed URLs |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | No | Only needed if you switch the agent to Claude — see below |
 
 `ESPN_SWID`/`ESPN_S2` are found via your browser's dev tools (Application → Cookies → fantasy.espn.com) while logged into your league.
 
@@ -88,9 +87,7 @@ Oracle:   [query_stats({"player_name": "Kenny Gainwell", ...})]
 
 ## Choosing a model
 
-`agent/chat.py` talks to any OpenAI-compatible Chat Completions API, currently configured for [OpenRouter](https://openrouter.ai) so you can point it at nearly any model, including free/cheap ones. The default, `qwen/qwen3.7-flash`, is inexpensive and supports tool calling well.
-
-The `anthropic` package and `ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL` config are also present — the tool schemas (`TOOL_SCHEMA` in each `tools/*.py` file) are written in Anthropic's format and adapted to OpenAI's format at call time in `chat.py`. Pointing the agent back at Claude directly would mean swapping the OpenAI client/response handling in `agent/chat.py` for the Anthropic Messages API.
+`agent/chat.py` talks to [OpenRouter](https://openrouter.ai)'s OpenAI-compatible Chat Completions API, so you can point it at nearly any model OpenRouter offers, including free/cheap ones, by changing `OPENROUTER_MODEL` in `.env`. The default, `qwen/qwen3.7-flash`, is inexpensive and supports tool calling well.
 
 ## Project structure
 

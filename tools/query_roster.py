@@ -1,4 +1,4 @@
-# My team / league lookup tool, exposed as an Anthropic tool-use function.
+# My team / league lookup tool, exposed as an LLM tool-calling function.
 import argparse
 import json
 import os

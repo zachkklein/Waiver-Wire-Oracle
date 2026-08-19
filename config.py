@@ -13,11 +13,8 @@ ESPN_SEASON = os.getenv("ESPN_SEASON")
 ESPN_SWID = os.getenv("ESPN_SWID")
 ESPN_S2 = os.getenv("ESPN_S2")
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
-
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "qwen/qwen3.7-flash")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL") or "qwen/qwen3.7-flash"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 RSS_FEED_URLS = [

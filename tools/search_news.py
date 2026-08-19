@@ -1,4 +1,4 @@
-# Vector search tool over ingested NFL news, exposed as an Anthropic tool-use function.
+# Vector search tool over ingested NFL news, exposed as an LLM tool-calling function.
 import argparse
 import json
 import os

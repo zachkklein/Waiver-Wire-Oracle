@@ -1,4 +1,4 @@
-# SQL lookup tool for player stats, exposed as an Anthropic tool-use function.
+# SQL lookup tool for player stats, exposed as an LLM tool-calling function.
 import argparse
 import json
 import os

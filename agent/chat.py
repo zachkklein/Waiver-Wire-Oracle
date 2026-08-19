@@ -33,13 +33,13 @@ a verdict.\
 """
 
 
-def _to_openai_tool(anthropic_tool_schema: dict) -> dict:
+def _to_openai_tool(tool_schema: dict) -> dict:
     return {
         "type": "function",
         "function": {
-            "name": anthropic_tool_schema["name"],
-            "description": anthropic_tool_schema["description"],
-            "parameters": anthropic_tool_schema["input_schema"],
+            "name": tool_schema["name"],
+            "description": tool_schema["description"],
+            "parameters": tool_schema["input_schema"],
         },
     }
 
