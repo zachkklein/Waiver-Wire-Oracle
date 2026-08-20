@@ -1,4 +1,5 @@
 import type { Meta } from "../lib/types"
+import { teamLogoUrl } from "../lib/api"
 import { timeAgo } from "../lib/format"
 import LeagueSwitcher from "./LeagueSwitcher"
 import TeamBadge from "./TeamBadge"
@@ -16,7 +17,12 @@ export default function TopBar({ meta }: { meta: Meta | null }) {
 
         {meta?.self_team && (
           <div className="flex items-center gap-2.5 rounded-full bg-surface-raised py-1.5 pl-1.5 pr-4">
-            <TeamBadge name={meta.self_team.team_name} seed={meta.self_team.team_id} size="sm" />
+            <TeamBadge
+              name={meta.self_team.team_name}
+              seed={meta.self_team.team_id}
+              logoUrl={teamLogoUrl(meta.self_team.team_id, meta.self_team.logo_url)}
+              size="sm"
+            />
             <div className="leading-tight">
               <div className="max-w-[10rem] truncate text-sm font-semibold text-text">
                 {meta.self_team.team_name}

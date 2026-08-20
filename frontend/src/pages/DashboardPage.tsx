@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { api } from "../lib/api"
+import { api, teamLogoUrl } from "../lib/api"
 import type { Meta, MatchupsResponse, Team } from "../lib/types"
 import Card from "../components/Card"
 import MatchupCard from "../components/MatchupCard"
@@ -10,12 +10,14 @@ import { round1 } from "../lib/format"
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl bg-surface px-5 py-4">
+    <div className="rounded-2xl bg-surface px-5 py-3.5">
       <div className="text-xs text-text-muted">{label}</div>
       <div className="mt-1 text-2xl font-extrabold tabular-nums text-text">{value}</div>
     </div>
   )
 }
+
+const STANDINGS_WINDOW = 5
 
 export default function DashboardPage() {
   const [meta, setMeta] = useState<Meta | null>(null)
@@ -38,12 +40,25 @@ export default function DashboardPage() {
 
   const selfMatchup = matchups?.matchups.find((m) => m.is_self)
   const ranked = [...(teams ?? [])].sort((a, b) => b.wins - a.wins || b.points_for - a.points_for)
-  const selfRank = ranked.findIndex((t) => t.is_self) + 1
-  const selfTeam = ranked.find((t) => t.is_self)
+  const selfIndex = ranked.findIndex((t) => t.is_self)
+  const selfRank = selfIndex + 1
+  const selfTeam = ranked[selfIndex]
+
+  // Show a five-team window centred on your own rank, clamped at either end of the
+  // table — so you always see two rivals above and two below, or the nearest five
+  // when you're near the top or bottom. The full table lives on /standings.
+  const windowStart = Math.min(
+    Math.max((selfIndex < 0 ? 0 : selfIndex) - 2, 0),
+    Math.max(ranked.length - STANDINGS_WINDOW, 0),
+  )
+  const nearbyTeams = ranked.slice(windowStart, windowStart + STANDINGS_WINDOW)
 
   return (
-    <div className="flex flex-col gap-6">
-      <header>
+    // Fixed to the viewport on desktop so the dashboard never scrolls: the header,
+    // stat row and shortcut row hold their natural heights and the matchup/standings
+    // row absorbs whatever is left. Mobile stacks and scrolls as usual.
+    <div className="flex flex-col gap-4 lg:h-full lg:min-h-0">
+      <header className="shrink-0">
         <h1 className="font-display soft text-[30px] font-semibold leading-tight text-text md:text-[40px]">
           {meta.self_team?.team_name ?? "Dashboard"}
         </h1>
@@ -54,7 +69,7 @@ export default function DashboardPage() {
       </header>
 
       {selfTeam && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="grid shrink-0 grid-cols-2 gap-3 md:grid-cols-4">
           <Stat
             label="Record"
             value={`${selfTeam.wins}-${selfTeam.losses}${selfTeam.ties ? `-${selfTeam.ties}` : ""}`}
@@ -65,10 +80,13 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-3">
+      {/* No min-h-0 here on purpose: the row never shrinks below the five standings
+          rows, it only absorbs spare height. On a window too short for even that, the
+          page falls back to scrolling rather than clipping the table. */}
+      <div className="grid grid-cols-1 gap-4 lg:flex-1 lg:grid-cols-3">
         <div className="lg:col-span-2">
           {selfMatchup ? (
-            <MatchupCard matchup={selfMatchup} featured />
+            <MatchupCard matchup={selfMatchup} featured className="lg:h-full" />
           ) : (
             <Card title="Your matchup">
               <p className="text-sm text-text-muted">
@@ -84,6 +102,7 @@ export default function DashboardPage() {
 
         <Card
           title="Standings"
+          className="lg:h-full"
           bodyClassName="px-3 pb-3 pt-2"
           action={
             <Link to="/standings" className="text-xs font-semibold text-accent hover:underline">
@@ -91,16 +110,18 @@ export default function DashboardPage() {
             </Link>
           }
         >
-          {ranked.slice(0, 6).map((t, i) => (
+          {nearbyTeams.map((t, i) => (
             <Link
               key={t.team_id}
               to={t.is_self ? "/roster" : `/roster?team=${encodeURIComponent(t.team_name)}`}
-              className={`flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-surface-raised ${
+              className={`flex items-center gap-3 rounded-xl px-2 py-1 transition-colors hover:bg-surface-raised ${
                 t.is_self ? "bg-accent/10" : ""
               }`}
             >
-              <span className="w-4 text-xs font-semibold tabular-nums text-text-faint">{i + 1}</span>
-              <TeamBadge name={t.team_name} seed={t.team_id} size="sm" />
+              <span className="w-4 text-xs font-semibold tabular-nums text-text-faint">
+                {windowStart + i + 1}
+              </span>
+              <TeamBadge name={t.team_name} seed={t.team_id} logoUrl={teamLogoUrl(t.team_id, t.logo_url)} size="sm" />
               <span
                 className={`flex-1 truncate text-sm hover:underline ${
                   t.is_self ? "font-semibold text-accent" : "text-text-muted"
@@ -116,7 +137,7 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid shrink-0 grid-cols-1 gap-4 sm:grid-cols-3">
         {[
           { to: "/roster", title: "My Team", copy: "Starters, bench, injury report" },
           {
@@ -129,7 +150,7 @@ export default function DashboardPage() {
           <Link
             key={link.to}
             to={link.to}
-            className="group rounded-2xl border border-border bg-surface p-5 shadow-soft transition-all hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-lift"
+            className="group rounded-2xl border border-border bg-surface p-4 shadow-soft transition-all hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-lift"
           >
             <div className="font-display soft text-base font-semibold text-text group-hover:text-accent">
               {link.title}

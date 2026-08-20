@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { api } from "../lib/api"
+import { api, teamLogoUrl } from "../lib/api"
 import type { Team } from "../lib/types"
 import PageHeader from "../components/PageHeader"
 import TeamBadge from "../components/TeamBadge"
@@ -87,7 +87,7 @@ export default function StandingsPage() {
                       to={t.is_self ? "/roster" : `/roster?team=${encodeURIComponent(t.team_name)}`}
                       className="flex items-center gap-3 hover:underline"
                     >
-                      <TeamBadge name={t.team_name} seed={t.team_id} size="sm" />
+                      <TeamBadge name={t.team_name} seed={t.team_id} logoUrl={teamLogoUrl(t.team_id, t.logo_url)} size="sm" />
                       <span
                         className={`text-sm ${
                           t.is_self ? "font-bold text-accent" : "font-medium text-text"

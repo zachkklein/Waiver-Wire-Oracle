@@ -13,3 +13,5 @@ data/settings.json
 
 frontend/node_modules/
 frontend/dist/
+
+data/logos/

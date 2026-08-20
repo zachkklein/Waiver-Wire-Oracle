@@ -1,5 +1,6 @@
 import type { Matchup } from "../lib/types"
 import TeamBadge from "./TeamBadge"
+import { teamLogoUrl } from "../lib/api"
 import { round1 } from "../lib/format"
 
 /**
@@ -49,9 +50,20 @@ export default function MatchupCard({
         ) : null}
       </div>
 
-      <div className="flex items-start justify-between gap-4">
+      {/* When the card is stretched to fill a row (the dashboard's featured slot), the
+          teams take the slack and stay centred rather than leaving a gap underneath. */}
+      <div
+        className={`flex justify-between gap-4 ${
+          featured ? "flex-1 items-center" : "items-start"
+        }`}
+      >
         <div className="min-w-0 flex-1">
-          <TeamBadge name={matchup.home_team_name} seed={matchup.home_team_id} size={avatar} />
+          <TeamBadge
+            name={matchup.home_team_name}
+            seed={matchup.home_team_id}
+            logoUrl={teamLogoUrl(matchup.home_team_id, matchup.home_logo_url)}
+            size={avatar}
+          />
           <h3
             className={`mt-3 font-display soft ${nameSize} font-semibold leading-snug ${
               awayLeads ? "text-text-muted" : "text-text"
@@ -70,7 +82,12 @@ export default function MatchupCard({
 
         <div className="min-w-0 flex-1 text-right">
           <div className="flex justify-end">
-            <TeamBadge name={matchup.away_team_name} seed={matchup.away_team_id} size={avatar} />
+            <TeamBadge
+              name={matchup.away_team_name}
+              seed={matchup.away_team_id}
+              logoUrl={teamLogoUrl(matchup.away_team_id, matchup.away_logo_url)}
+              size={avatar}
+            />
           </div>
           <h3
             className={`mt-3 font-display soft ${nameSize} font-semibold leading-snug ${

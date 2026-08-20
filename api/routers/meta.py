@@ -40,7 +40,8 @@ def get_meta():
             return _empty()
 
         self_team = conn.execute(
-            "SELECT team_id, team_name, wins, losses, ties FROM teams WHERE league_id = ? AND is_self = 1 LIMIT 1",
+            "SELECT team_id, team_name, wins, losses, ties, logo_url FROM teams "
+            "WHERE league_id = ? AND is_self = 1 LIMIT 1",
             (league_id,),
         ).fetchone()
         current_week = conn.execute(

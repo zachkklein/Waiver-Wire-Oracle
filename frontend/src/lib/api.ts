@@ -91,6 +91,13 @@ export const api = {
     sendEmpty<League[]>("DELETE", `/leagues/${encodeURIComponent(leagueId)}`),
 }
 
+/** Team logos are served through the app rather than linked straight to ESPN: members'
+ * own uploads live behind ESPN's auth cookies, which the browser doesn't have. A team
+ * with no synced logo gets null so `TeamBadge` falls back to initials. */
+export function teamLogoUrl(teamId: number, logoUrl: string | null | undefined): string | null {
+  return logoUrl ? `/api/team-logo/${teamId}` : null
+}
+
 export async function* streamChat(messages: ChatMsg[]): AsyncGenerator<ChatStreamEvent> {
   const res = await fetch("/api/chat", {
     method: "POST",

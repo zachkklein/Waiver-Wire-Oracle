@@ -60,10 +60,13 @@ def _resolve_team(conn: sqlite3.Connection, league_id: str, team_query: str | No
     return dict(row) if row else None
 
 
-def _get_teams(conn: sqlite3.Connection, league_id: str) -> dict:
+def _get_teams(conn: sqlite3.Connection, league_id: str, include_logos: bool) -> dict:
+    # logo_url is for the web UI only — it's noise in the LLM's tool results, so it's
+    # opt-in rather than always selected.
+    logo_col = ", logo_url" if include_logos else ""
     rows = conn.execute(
-        """
-        SELECT team_id, team_name, wins, losses, ties, points_for, points_against, is_self
+        f"""
+        SELECT team_id, team_name, wins, losses, ties, points_for, points_against, is_self{logo_col}
         FROM teams
         WHERE league_id = ?
         ORDER BY wins DESC, points_for DESC
@@ -73,7 +76,9 @@ def _get_teams(conn: sqlite3.Connection, league_id: str) -> dict:
     return {"teams": [dict(row) for row in rows]}
 
 
-def _get_roster(conn: sqlite3.Connection, league_id: str, team_query: str | None) -> dict:
+def _get_roster(
+    conn: sqlite3.Connection, league_id: str, team_query: str | None, include_logos: bool
+) -> dict:
     team_row = _resolve_team(conn, league_id, team_query)
     if not team_row:
         msg = (
@@ -101,19 +106,24 @@ def _get_roster(conn: sqlite3.Connection, league_id: str, team_query: str | None
             d["lineup_slot"] = "FLEX"
         player_dicts.append(d)
 
-    return {
-        "team": {
-            "team_id": team_row["team_id"],
-            "team_name": team_row["team_name"],
-            "wins": team_row["wins"],
-            "losses": team_row["losses"],
-        },
-        "players": player_dicts,
+    team = {
+        "team_id": team_row["team_id"],
+        "team_name": team_row["team_name"],
+        "wins": team_row["wins"],
+        "losses": team_row["losses"],
     }
+    if include_logos:
+        team["logo_url"] = team_row["logo_url"]
+
+    return {"team": team, "players": player_dicts}
 
 
 def _get_matchup(
-    conn: sqlite3.Connection, league_id: str, team_query: str | None, week: int | None
+    conn: sqlite3.Connection,
+    league_id: str,
+    team_query: str | None,
+    week: int | None,
+    include_logos: bool,
 ) -> dict:
     if week is None:
         row = conn.execute(
@@ -145,18 +155,21 @@ def _get_matchup(
         if not matchup_rows:
             return {"error": f"No matchups synced for week {week}."}
 
-    team_names = {
-        row["team_id"]: row["team_name"]
+    teams = {
+        row["team_id"]: row
         for row in conn.execute(
-            "SELECT team_id, team_name FROM teams WHERE league_id = ?", (league_id,)
+            "SELECT team_id, team_name, logo_url FROM teams WHERE league_id = ?", (league_id,)
         ).fetchall()
     }
 
     matchups = []
     for row in matchup_rows:
         m = dict(row)
-        m["home_team_name"] = team_names.get(m["home_team_id"], "Unknown")
-        m["away_team_name"] = team_names.get(m["away_team_id"], "Unknown")
+        for side in ("home", "away"):
+            team = teams.get(m[f"{side}_team_id"])
+            m[f"{side}_team_name"] = team["team_name"] if team else "Unknown"
+            if include_logos:
+                m[f"{side}_logo_url"] = team["logo_url"] if team else None
         matchups.append(m)
 
     return {"week": week, "matchups": matchups}
@@ -166,6 +179,7 @@ def query_roster(
     view: str = "roster",
     team: str | None = None,
     week: int | None = None,
+    include_logos: bool = False,
 ) -> dict:
     view = (view or "roster").lower()
     league_id = str(config.ESPN_LEAGUE_ID)
@@ -174,11 +188,11 @@ def query_roster(
     conn.row_factory = sqlite3.Row
     try:
         if view == "teams":
-            return _get_teams(conn, league_id)
+            return _get_teams(conn, league_id, include_logos)
         if view == "roster":
-            return _get_roster(conn, league_id, team)
+            return _get_roster(conn, league_id, team, include_logos)
         if view == "matchup":
-            return _get_matchup(conn, league_id, team, week)
+            return _get_matchup(conn, league_id, team, week, include_logos)
         return {"error": f"Unknown view '{view}'. Must be one of: roster, teams, matchup."}
     finally:
         conn.close()

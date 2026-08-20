@@ -7,6 +7,7 @@ export interface Team {
   points_for: number
   points_against: number
   is_self: number
+  logo_url: string | null
 }
 
 export interface RosterPlayer {
@@ -25,6 +26,7 @@ export interface RosterResponse {
     team_name: string
     wins: number
     losses: number
+    logo_url: string | null
   }
   players: RosterPlayer[]
   error?: string
@@ -42,6 +44,8 @@ export interface Matchup {
   away_projected: number
   is_playoff: number
   is_self: number
+  home_logo_url: string | null
+  away_logo_url: string | null
 }
 
 export interface MatchupsResponse {
@@ -88,7 +92,14 @@ export interface NewsResult {
 }
 
 export interface Meta {
-  self_team: { team_id: number; team_name: string; wins: number; losses: number; ties: number } | null
+  self_team: {
+    team_id: number
+    team_name: string
+    wins: number
+    losses: number
+    ties: number
+    logo_url: string | null
+  } | null
   current_week: number | null
   synced_at: { teams: string | null; rosters: string | null; matchups: string | null }
   player_stats_rows: number

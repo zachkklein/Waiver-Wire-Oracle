@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS teams (
     points_for REAL,
     points_against REAL,
     is_self INTEGER,
+    logo_url TEXT,
     updated_at TEXT,
     PRIMARY KEY (league_id, team_id)
 );
@@ -106,9 +107,23 @@ def _migrate_legacy_tables(conn: sqlite3.Connection, league_id: str) -> None:
         conn.execute(f"DROP TABLE {table}_legacy")
 
 
+# Columns added to an existing table after its first release. Unlike the league_id
+# migration these need no backfill — the next sync fills them in.
+ADDED_COLUMNS = {"teams": [("logo_url", "TEXT")]}
+
+
+def _migrate_added_columns(conn: sqlite3.Connection) -> None:
+    for table, columns in ADDED_COLUMNS.items():
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in columns:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
 def init_db(conn: sqlite3.Connection, league_id: str) -> None:
     _migrate_legacy_tables(conn, league_id)
     conn.executescript(SCHEMA)
+    _migrate_added_columns(conn)
 
 
 def find_self_team_id(league: League) -> int | None:
@@ -150,14 +165,16 @@ def sync_teams(
             team.points_for,
             team.points_against,
             int(team.team_id == self_team_id),
+            # espn-api leaves logo_url as "" for teams that never set one.
+            getattr(team, "logo_url", None) or None,
             now,
         )
         for team in league.teams
     ]
     conn.executemany(
         """
-        INSERT INTO teams (league_id, team_id, team_name, wins, losses, ties, points_for, points_against, is_self, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO teams (league_id, team_id, team_name, wins, losses, ties, points_for, points_against, is_self, logo_url, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(league_id, team_id) DO UPDATE SET
             team_name=excluded.team_name,
             wins=excluded.wins,
@@ -166,6 +183,7 @@ def sync_teams(
             points_for=excluded.points_for,
             points_against=excluded.points_against,
             is_self=excluded.is_self,
+            logo_url=excluded.logo_url,
             updated_at=excluded.updated_at
         """,
         rows,

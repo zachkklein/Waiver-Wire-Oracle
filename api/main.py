@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 import config
-from api.routers import chat, league, leagues, meta, news, settings, stats
+from api.routers import chat, league, leagues, logos, meta, news, settings, stats
 
 app = FastAPI(title="Waiver Wire Oracle")
 
@@ -43,6 +43,7 @@ app.add_middleware(
 for router in (
     league.router,
     leagues.router,
+    logos.router,
     stats.router,
     news.router,
     meta.router,

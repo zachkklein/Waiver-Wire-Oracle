@@ -15,9 +15,12 @@ export default function Sidebar() {
   return (
     <aside className="flex w-full shrink-0 flex-col border-b border-border bg-surface md:w-64 md:border-b-0 md:border-r">
       <div className="flex items-center gap-3 px-5 py-5 md:px-6 md:py-7">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-lg">
-          🏈
-        </span>
+        <img
+          src="/waiverLogo.png"
+          alt=""
+          aria-hidden
+          className="h-11 w-11 shrink-0 object-contain"
+        />
         <span className="font-display soft text-[17px] font-semibold leading-[1.15] text-text">
           Waiver Wire
           <br />

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { api } from "../lib/api"
+import { api, teamLogoUrl } from "../lib/api"
 import type { RosterResponse, Team } from "../lib/types"
 import Card from "../components/Card"
 import PageHeader from "../components/PageHeader"
+import TeamBadge from "../components/TeamBadge"
 import PlayerRow from "../components/PlayerRow"
 import { Select } from "../components/Field"
 import { LoadingState, ErrorState } from "../components/EmptyState"
@@ -45,6 +46,16 @@ export default function RosterPage() {
     <div>
       <PageHeader
         title={roster?.team.team_name ?? "My Team"}
+        icon={
+          roster ? (
+            <TeamBadge
+              name={roster.team.team_name}
+              seed={roster.team.team_id}
+              logoUrl={teamLogoUrl(roster.team.team_id, roster.team.logo_url)}
+              size="lg"
+            />
+          ) : null
+        }
         eyebrow={
           roster
             ? `${roster.team.wins}-${roster.team.losses} · Starters projected ${round1(projected)} across the season`
