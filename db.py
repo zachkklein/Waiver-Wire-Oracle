@@ -25,9 +25,23 @@ from contextlib import contextmanager
 import config
 
 
+# psycopg wants a libpq connection string. Supabase's dashboard offers several URLs
+# on different pages, and the API one (https://<ref>.supabase.co) is the easy mistake.
+_POSTGRES_SCHEMES = ("postgresql://", "postgres://")
+
+
 def database_url() -> str | None:
     """The Postgres URL, or None when running on the local SQLite file."""
-    return os.getenv("DATABASE_URL") or None
+    url = os.getenv("DATABASE_URL") or None
+    if url and not url.startswith(_POSTGRES_SCHEMES):
+        raise RuntimeError(
+            "DATABASE_URL must be a Postgres connection string starting with "
+            f"postgresql://, but got {url.split('://')[0]}://...\n"
+            "In Supabase that's Project Settings -> Database -> Connection string -> "
+            "URI (prefer the pooled one on port 6543) — not the Project URL under "
+            "Project Settings -> API, which is an https:// address for PostgREST."
+        )
+    return url
 
 
 def is_postgres() -> bool:
@@ -59,11 +73,50 @@ def _to_pg(sql: str) -> str:
     return "".join(out)
 
 
-class _PgConnection:
-    """Wraps a psycopg connection in the small slice of the sqlite3 API we use."""
+# One pool per process, created on first use. Opening a fresh connection per request
+# means a TLS handshake to the database's region every time: that measured ~0.7s of
+# pure overhead, turning a 5ms SQLite endpoint into a 2.5s one. The pool amortises it.
+#
+# This is a module-level global, unlike anything in context.py, and that's fine — it's
+# infrastructure shared by every request, not per-user state.
+_pool = None
+_pool_url = None
 
-    def __init__(self, raw):
+
+def _get_pool():
+    global _pool, _pool_url
+    url = database_url()
+    if _pool is None or _pool_url != url:
+        from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
+
+        if _pool is not None:
+            _pool.close()  # DATABASE_URL changed under us (tests, mostly)
+        _pool = ConnectionPool(
+            url,
+            min_size=1,
+            max_size=10,
+            kwargs={"row_factory": dict_row},
+            open=True,
+        )
+        _pool_url = url
+    return _pool
+
+
+def close_pool() -> None:
+    """Drop the pool. For tests, and for a clean process shutdown."""
+    global _pool, _pool_url
+    if _pool is not None:
+        _pool.close()
+        _pool, _pool_url = None, None
+
+
+class _PgConnection:
+    """Wraps a pooled psycopg connection in the slice of the sqlite3 API we use."""
+
+    def __init__(self, raw, pool=None):
         self._raw = raw
+        self._pool = pool
 
     def execute(self, sql, params=()):
         cur = self._raw.cursor()
@@ -89,18 +142,29 @@ class _PgConnection:
         self._raw.rollback()
 
     def close(self):
-        self._raw.close()
+        """Return the connection to the pool rather than dropping it.
+
+        Roll back first so the connection goes back IDLE. psycopg is not autocommit, so
+        even a plain SELECT leaves it INTRANS; handing it back in that state makes
+        psycopg_pool reset it and log "rolling back returned connection" on every single
+        request. Uncommitted work is discarded either way — commit() is always explicit —
+        this just keeps the logs readable.
+        """
+        if self._pool is None:
+            self._raw.close()
+            return
+        try:
+            self._raw.rollback()
+        finally:
+            self._pool.putconn(self._raw)
 
 
 def connect():
     """Open a connection. Callers are responsible for commit()/close(), or use
     :func:`session` to get both handled."""
-    url = database_url()
-    if url:
-        import psycopg
-        from psycopg.rows import dict_row
-
-        return _PgConnection(psycopg.connect(url, row_factory=dict_row))
+    if is_postgres():
+        pool = _get_pool()
+        return _PgConnection(pool.getconn(), pool)
 
     conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row  # so rows are readable by column name on both backends

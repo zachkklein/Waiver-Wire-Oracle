@@ -182,10 +182,23 @@ run on Postgres and return values identical to SQLite, with `is_self` coming bac
 `integer` rather than `boolean` as the frontend requires. The SQLite path still 200s
 on every endpoint.
 
-**Remaining:** the app can't be pointed at Postgres until `DATABASE_URL` is set,
-which needs the database password (Supabase dashboard -> Project Settings ->
-Database). Migrations and verification above went through the Supabase management
-API, which doesn't expose that password.
+**Live on Postgres.** `DATABASE_URL` is set, all 5,774 rows migrated
+(`teams` 10, `rosters` 162, `matchups` 5, `player_stats` 5,597), counts match SQLite
+exactly, and re-running the migration changes nothing. Every endpoint 200s, the
+chat tool loop runs, and `main.py sync espn` writes straight through to Supabase.
+
+Connections are pooled. One-per-request cost ~0.7s of TLS handshake each time; the
+pool plus collapsing `/api/meta`'s five aggregates into one statement took that
+endpoint from 2.51s to 0.78s, and `/api/roster` from 1.02s to 0.33s. What remains is
+~110ms per round trip from a laptop to us-east-1 — the same endpoints are 1-18ms on
+SQLite. That gap is geography and closes in production, where app and database share
+a region; locally, developing with `DATABASE_URL` unset stays much faster.
+
+Two things worth carrying into later phases:
+- `DATABASE_URL` currently uses the **direct** connection (port 5432). Switch to the
+  **pooled** one (6543) when deploying, since the container will hold more concurrent
+  connections than the direct endpoint likes.
+- Round trips dominate, so prefer one query over several. `/api/meta` is the model.
 
 ### Phase 3 — Auth and onboarding *(~2–3 days)*
 

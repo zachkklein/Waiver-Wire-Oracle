@@ -40,27 +40,33 @@ def get_meta(league: LeagueDep):
             "WHERE league_id = ? AND is_self = 1 LIMIT 1",
             (league_id,),
         ).fetchone()
-        current_week = conn.execute(
-            "SELECT MAX(week) AS w FROM matchups WHERE league_id = ?", (league_id,)
-        ).fetchone()["w"]
-        teams_synced_at = conn.execute(
-            "SELECT MAX(updated_at) AS t FROM teams WHERE league_id = ?", (league_id,)
-        ).fetchone()["t"]
-        rosters_synced_at = conn.execute(
-            "SELECT MAX(updated_at) AS t FROM rosters WHERE league_id = ?", (league_id,)
-        ).fetchone()["t"]
-        matchups_synced_at = conn.execute(
-            "SELECT MAX(updated_at) AS t FROM matchups WHERE league_id = ?", (league_id,)
-        ).fetchone()["t"]
-        stats_row_count = (
-            conn.execute("SELECT COUNT(*) AS c FROM player_stats").fetchone()["c"]
-            if "player_stats" in tables
-            else 0
+
+        # One round trip for the five aggregates rather than five. The frontend refetches
+        # /api/meta on every navigation, and against a remote Postgres each round trip is
+        # real latency — five sequential ones made this the slowest endpoint in the app.
+        stats_expr = (
+            "(SELECT COUNT(*) FROM player_stats)" if "player_stats" in tables else "0"
         )
+        summary = conn.execute(
+            f"""
+            SELECT
+                (SELECT MAX(week) FROM matchups WHERE league_id = ?) AS current_week,
+                (SELECT MAX(updated_at) FROM teams WHERE league_id = ?) AS teams_at,
+                (SELECT MAX(updated_at) FROM rosters WHERE league_id = ?) AS rosters_at,
+                (SELECT MAX(updated_at) FROM matchups WHERE league_id = ?) AS matchups_at,
+                {stats_expr} AS stats_rows
+            """,
+            (league_id, league_id, league_id, league_id),
+        ).fetchone()
+
+        teams_synced_at = summary["teams_at"]
+        rosters_synced_at = summary["rosters_at"]
+        matchups_synced_at = summary["matchups_at"]
+        stats_row_count = summary["stats_rows"]
 
         return {
             "self_team": dict(self_team) if self_team else None,
-            "current_week": current_week,
+            "current_week": summary["current_week"],
             "synced_at": {
                 "teams": teams_synced_at,
                 "rosters": rosters_synced_at,
