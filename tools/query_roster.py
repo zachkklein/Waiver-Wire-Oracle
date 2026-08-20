@@ -13,7 +13,8 @@ TOOL_SCHEMA = {
     "description": (
         "Look up fantasy league info synced from ESPN: your team's roster, the league's "
         "standings, or a given week's matchups. Data comes from the last time espn_sync.py "
-        "was run, so it reflects that point in time, not necessarily live scores."
+        "was run, so it reflects that point in time, not necessarily live scores. Always "
+        "scoped to whichever league is currently active in the app."
     ),
     "input_schema": {
         "type": "object",
@@ -46,30 +47,34 @@ TOOL_SCHEMA = {
 }
 
 
-def _resolve_team(conn: sqlite3.Connection, team_query: str | None):
+def _resolve_team(conn: sqlite3.Connection, league_id: str, team_query: str | None):
     if team_query:
         row = conn.execute(
-            "SELECT * FROM teams WHERE team_name LIKE ? ORDER BY team_id LIMIT 1",
-            (f"%{team_query}%",),
+            "SELECT * FROM teams WHERE league_id = ? AND team_name LIKE ? ORDER BY team_id LIMIT 1",
+            (league_id, f"%{team_query}%"),
         ).fetchone()
     else:
-        row = conn.execute("SELECT * FROM teams WHERE is_self = 1 LIMIT 1").fetchone()
+        row = conn.execute(
+            "SELECT * FROM teams WHERE league_id = ? AND is_self = 1 LIMIT 1", (league_id,)
+        ).fetchone()
     return dict(row) if row else None
 
 
-def _get_teams(conn: sqlite3.Connection) -> dict:
+def _get_teams(conn: sqlite3.Connection, league_id: str) -> dict:
     rows = conn.execute(
         """
         SELECT team_id, team_name, wins, losses, ties, points_for, points_against, is_self
         FROM teams
+        WHERE league_id = ?
         ORDER BY wins DESC, points_for DESC
-        """
+        """,
+        (league_id,),
     ).fetchall()
     return {"teams": [dict(row) for row in rows]}
 
 
-def _get_roster(conn: sqlite3.Connection, team_query: str | None) -> dict:
-    team_row = _resolve_team(conn, team_query)
+def _get_roster(conn: sqlite3.Connection, league_id: str, team_query: str | None) -> dict:
+    team_row = _resolve_team(conn, league_id, team_query)
     if not team_row:
         msg = (
             f"No team found matching '{team_query}'."
@@ -83,11 +88,18 @@ def _get_roster(conn: sqlite3.Connection, team_query: str | None) -> dict:
         SELECT player_name, position, pro_team, lineup_slot, injury_status,
                total_points, projected_total_points
         FROM rosters
-        WHERE team_id = ?
+        WHERE league_id = ? AND team_id = ?
         ORDER BY CASE WHEN lineup_slot = 'BE' THEN 1 ELSE 0 END, position
         """,
-        (team_row["team_id"],),
+        (league_id, team_row["team_id"]),
     ).fetchall()
+
+    player_dicts = []
+    for p in players:
+        d = dict(p)
+        if d["lineup_slot"] == "RB/WR/TE":
+            d["lineup_slot"] = "FLEX"
+        player_dicts.append(d)
 
     return {
         "team": {
@@ -96,37 +108,48 @@ def _get_roster(conn: sqlite3.Connection, team_query: str | None) -> dict:
             "wins": team_row["wins"],
             "losses": team_row["losses"],
         },
-        "players": [dict(p) for p in players],
+        "players": player_dicts,
     }
 
 
-def _get_matchup(conn: sqlite3.Connection, team_query: str | None, week: int | None) -> dict:
+def _get_matchup(
+    conn: sqlite3.Connection, league_id: str, team_query: str | None, week: int | None
+) -> dict:
     if week is None:
-        row = conn.execute("SELECT MAX(week) AS w FROM matchups").fetchone()
+        row = conn.execute(
+            "SELECT MAX(week) AS w FROM matchups WHERE league_id = ?", (league_id,)
+        ).fetchone()
         week = row["w"] if row else None
     if week is None:
         return {"error": "No matchups have been synced yet — run espn_sync.py first."}
 
-    team_row = _resolve_team(conn, team_query)
+    team_row = _resolve_team(conn, league_id, team_query)
 
     if team_query and not team_row:
         return {"error": f"No team found matching '{team_query}'."}
 
     if team_row:
         matchup_rows = conn.execute(
-            "SELECT * FROM matchups WHERE week = ? AND (home_team_id = ? OR away_team_id = ?)",
-            (week, team_row["team_id"], team_row["team_id"]),
+            """
+            SELECT * FROM matchups
+            WHERE league_id = ? AND week = ? AND (home_team_id = ? OR away_team_id = ?)
+            """,
+            (league_id, week, team_row["team_id"], team_row["team_id"]),
         ).fetchall()
         if not matchup_rows:
             return {"error": f"No matchup found for '{team_row['team_name']}' in week {week}."}
     else:
-        matchup_rows = conn.execute("SELECT * FROM matchups WHERE week = ?", (week,)).fetchall()
+        matchup_rows = conn.execute(
+            "SELECT * FROM matchups WHERE league_id = ? AND week = ?", (league_id, week)
+        ).fetchall()
         if not matchup_rows:
             return {"error": f"No matchups synced for week {week}."}
 
     team_names = {
         row["team_id"]: row["team_name"]
-        for row in conn.execute("SELECT team_id, team_name FROM teams").fetchall()
+        for row in conn.execute(
+            "SELECT team_id, team_name FROM teams WHERE league_id = ?", (league_id,)
+        ).fetchall()
     }
 
     matchups = []
@@ -145,16 +168,17 @@ def query_roster(
     week: int | None = None,
 ) -> dict:
     view = (view or "roster").lower()
+    league_id = str(config.ESPN_LEAGUE_ID)
 
     conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
         if view == "teams":
-            return _get_teams(conn)
+            return _get_teams(conn, league_id)
         if view == "roster":
-            return _get_roster(conn, team)
+            return _get_roster(conn, league_id, team)
         if view == "matchup":
-            return _get_matchup(conn, team, week)
+            return _get_matchup(conn, league_id, team, week)
         return {"error": f"Unknown view '{view}'. Must be one of: roster, teams, matchup."}
     finally:
         conn.close()

@@ -26,6 +26,8 @@ def get_meta():
     if not os.path.exists(config.DB_PATH):
         return _empty()
 
+    league_id = str(config.ESPN_LEAGUE_ID)
+
     conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
@@ -38,12 +40,21 @@ def get_meta():
             return _empty()
 
         self_team = conn.execute(
-            "SELECT team_id, team_name, wins, losses, ties FROM teams WHERE is_self = 1 LIMIT 1"
+            "SELECT team_id, team_name, wins, losses, ties FROM teams WHERE league_id = ? AND is_self = 1 LIMIT 1",
+            (league_id,),
         ).fetchone()
-        current_week = conn.execute("SELECT MAX(week) AS w FROM matchups").fetchone()["w"]
-        teams_synced_at = conn.execute("SELECT MAX(updated_at) AS t FROM teams").fetchone()["t"]
-        rosters_synced_at = conn.execute("SELECT MAX(updated_at) AS t FROM rosters").fetchone()["t"]
-        matchups_synced_at = conn.execute("SELECT MAX(updated_at) AS t FROM matchups").fetchone()["t"]
+        current_week = conn.execute(
+            "SELECT MAX(week) AS w FROM matchups WHERE league_id = ?", (league_id,)
+        ).fetchone()["w"]
+        teams_synced_at = conn.execute(
+            "SELECT MAX(updated_at) AS t FROM teams WHERE league_id = ?", (league_id,)
+        ).fetchone()["t"]
+        rosters_synced_at = conn.execute(
+            "SELECT MAX(updated_at) AS t FROM rosters WHERE league_id = ?", (league_id,)
+        ).fetchone()["t"]
+        matchups_synced_at = conn.execute(
+            "SELECT MAX(updated_at) AS t FROM matchups WHERE league_id = ?", (league_id,)
+        ).fetchone()["t"]
         stats_row_count = (
             conn.execute("SELECT COUNT(*) AS c FROM player_stats").fetchone()["c"]
             if "player_stats" in tables

@@ -9,9 +9,29 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from api.routers import chat, league, meta, news, settings, stats
+import config
+from api.routers import chat, league, leagues, meta, news, settings, stats
 
 app = FastAPI(title="Waiver Wire Oracle")
+
+
+@app.on_event("startup")
+def _migrate_db() -> None:
+    # One-time upgrade for databases created before multi-league support: teams/rosters/
+    # matchups need a league_id column. Backfilling it needs a league id, and pre-upgrade
+    # installs only ever had one — the currently configured (active) one.
+    if not config.ESPN_LEAGUE_ID:
+        return
+    import sqlite3
+
+    from ingest import espn_sync
+
+    conn = sqlite3.connect(config.DB_PATH)
+    try:
+        espn_sync.init_db(conn, str(config.ESPN_LEAGUE_ID))
+        conn.commit()
+    finally:
+        conn.close()
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,6 +42,7 @@ app.add_middleware(
 
 for router in (
     league.router,
+    leagues.router,
     stats.router,
     news.router,
     meta.router,

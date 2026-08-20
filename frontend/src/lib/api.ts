@@ -1,9 +1,11 @@
 import type {
   ChatMsg,
   ChatStreamEvent,
+  League,
   LeaguePreview,
   Meta,
   MatchupsResponse,
+  NewLeaguePayload,
   NewsResult,
   PlayerStatLine,
   RosterResponse,
@@ -33,6 +35,15 @@ async function sendJSON<T>(method: "POST" | "PUT", path: string, body: unknown):
   })
   if (!res.ok) {
     // FastAPI puts human-readable validation/HTTPException messages in `detail`.
+    const detail = await res.json().catch(() => null)
+    throw new Error(detail?.detail ?? `${path} failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+async function sendEmpty<T>(method: "PUT" | "DELETE", path: string): Promise<T> {
+  const res = await fetch(`/api${path}`, { method })
+  if (!res.ok) {
     const detail = await res.json().catch(() => null)
     throw new Error(detail?.detail ?? `${path} failed: ${res.status}`)
   }
@@ -71,6 +82,13 @@ export const api = {
   startSync: (targets?: SyncTarget[]) =>
     sendJSON<{ running: boolean; targets: string[] }>("POST", "/sync", { targets }),
   syncStatus: () => getJSON<SyncStatus>("/sync"),
+
+  leagues: () => getJSON<League[]>("/leagues"),
+  addLeague: (payload: NewLeaguePayload) => sendJSON<League[]>("POST", "/leagues", payload),
+  activateLeague: (leagueId: string) =>
+    sendEmpty<League[]>("PUT", `/leagues/${encodeURIComponent(leagueId)}/activate`),
+  removeLeague: (leagueId: string) =>
+    sendEmpty<League[]>("DELETE", `/leagues/${encodeURIComponent(leagueId)}`),
 }
 
 export async function* streamChat(messages: ChatMsg[]): AsyncGenerator<ChatStreamEvent> {

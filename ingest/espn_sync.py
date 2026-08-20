@@ -9,9 +9,14 @@ from espn_api.football import League
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 
+# league_id is ESPN's own league id (as a string) — it's already globally unique, so it
+# doubles as the key that scopes teams/rosters/matchups to one of possibly several
+# configured leagues sharing this database. player_stats/news stay unscoped: they're
+# nflverse/RSS data, not tied to any one ESPN league.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS teams (
-    team_id INTEGER PRIMARY KEY,
+    league_id TEXT,
+    team_id INTEGER,
     team_name TEXT,
     wins INTEGER,
     losses INTEGER,
@@ -19,10 +24,12 @@ CREATE TABLE IF NOT EXISTS teams (
     points_for REAL,
     points_against REAL,
     is_self INTEGER,
-    updated_at TEXT
+    updated_at TEXT,
+    PRIMARY KEY (league_id, team_id)
 );
 
 CREATE TABLE IF NOT EXISTS rosters (
+    league_id TEXT,
     team_id INTEGER,
     player_id INTEGER,
     player_name TEXT,
@@ -33,10 +40,11 @@ CREATE TABLE IF NOT EXISTS rosters (
     total_points REAL,
     projected_total_points REAL,
     updated_at TEXT,
-    PRIMARY KEY (team_id, player_id)
+    PRIMARY KEY (league_id, team_id, player_id)
 );
 
 CREATE TABLE IF NOT EXISTS matchups (
+    league_id TEXT,
     week INTEGER,
     home_team_id INTEGER,
     away_team_id INTEGER,
@@ -47,7 +55,7 @@ CREATE TABLE IF NOT EXISTS matchups (
     is_playoff INTEGER,
     is_self INTEGER,
     updated_at TEXT,
-    PRIMARY KEY (week, home_team_id, away_team_id)
+    PRIMARY KEY (league_id, week, home_team_id, away_team_id)
 );
 """
 
@@ -68,7 +76,38 @@ def get_league() -> League:
     )
 
 
-def init_db(conn: sqlite3.Connection) -> None:
+def _migrate_legacy_tables(conn: sqlite3.Connection, league_id: str) -> None:
+    """One-time upgrade for databases created before multi-league support: tables
+    without a league_id column get renamed aside, recreated with the new schema, and
+    their existing rows backfilled with `league_id` (the only league that data could
+    have belonged to)."""
+    existing = {
+        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    to_migrate = []
+    for table in ("teams", "rosters", "matchups"):
+        if table not in existing:
+            continue
+        cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+        if "league_id" in cols:
+            continue
+        conn.execute(f"ALTER TABLE {table} RENAME TO {table}_legacy")
+        to_migrate.append((table, cols))
+
+    conn.executescript(SCHEMA)
+
+    for table, cols in to_migrate:
+        collist = ", ".join(cols)
+        conn.execute(
+            f"INSERT INTO {table} (league_id, {collist}) "
+            f"SELECT ?, {collist} FROM {table}_legacy",
+            (league_id,),
+        )
+        conn.execute(f"DROP TABLE {table}_legacy")
+
+
+def init_db(conn: sqlite3.Connection, league_id: str) -> None:
+    _migrate_legacy_tables(conn, league_id)
     conn.executescript(SCHEMA)
 
 
@@ -96,10 +135,13 @@ def find_self_team_id(league: League) -> int | None:
     return None
 
 
-def sync_teams(conn: sqlite3.Connection, league: League, self_team_id: int | None) -> None:
+def sync_teams(
+    conn: sqlite3.Connection, league: League, league_id: str, self_team_id: int | None
+) -> None:
     now = datetime.now(timezone.utc).isoformat()
     rows = [
         (
+            league_id,
             team.team_id,
             team.team_name,
             team.wins,
@@ -114,9 +156,9 @@ def sync_teams(conn: sqlite3.Connection, league: League, self_team_id: int | Non
     ]
     conn.executemany(
         """
-        INSERT INTO teams (team_id, team_name, wins, losses, ties, points_for, points_against, is_self, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(team_id) DO UPDATE SET
+        INSERT INTO teams (league_id, team_id, team_name, wins, losses, ties, points_for, points_against, is_self, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(league_id, team_id) DO UPDATE SET
             team_name=excluded.team_name,
             wins=excluded.wins,
             losses=excluded.losses,
@@ -130,11 +172,14 @@ def sync_teams(conn: sqlite3.Connection, league: League, self_team_id: int | Non
     )
 
 
-def sync_roster(conn: sqlite3.Connection, team) -> None:
+def sync_roster(conn: sqlite3.Connection, team, league_id: str) -> None:
     now = datetime.now(timezone.utc).isoformat()
-    conn.execute("DELETE FROM rosters WHERE team_id = ?", (team.team_id,))
+    conn.execute(
+        "DELETE FROM rosters WHERE league_id = ? AND team_id = ?", (league_id, team.team_id)
+    )
     rows = [
         (
+            league_id,
             team.team_id,
             player.playerId,
             player.name,
@@ -151,16 +196,18 @@ def sync_roster(conn: sqlite3.Connection, team) -> None:
     conn.executemany(
         """
         INSERT INTO rosters (
-            team_id, player_id, player_name, position, pro_team,
+            league_id, team_id, player_id, player_name, position, pro_team,
             lineup_slot, injury_status, total_points, projected_total_points, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )
 
 
-def sync_matchups(conn: sqlite3.Connection, league: League, week: int, self_team_id: int | None) -> None:
+def sync_matchups(
+    conn: sqlite3.Connection, league: League, league_id: str, week: int, self_team_id: int | None
+) -> None:
     now = datetime.now(timezone.utc).isoformat()
     box_scores = league.box_scores(week=week)
 
@@ -171,6 +218,7 @@ def sync_matchups(conn: sqlite3.Connection, league: League, week: int, self_team
         is_self = self_team_id in (box.home_team.team_id, box.away_team.team_id)
         rows.append(
             (
+                league_id,
                 week,
                 box.home_team.team_id,
                 box.away_team.team_id,
@@ -187,11 +235,11 @@ def sync_matchups(conn: sqlite3.Connection, league: League, week: int, self_team
     conn.executemany(
         """
         INSERT INTO matchups (
-            week, home_team_id, away_team_id, home_score, away_score,
+            league_id, week, home_team_id, away_team_id, home_score, away_score,
             home_projected, away_projected, is_playoff, is_self, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(week, home_team_id, away_team_id) DO UPDATE SET
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(league_id, week, home_team_id, away_team_id) DO UPDATE SET
             home_score=excluded.home_score,
             away_score=excluded.away_score,
             home_projected=excluded.home_projected,
@@ -206,18 +254,19 @@ def sync_matchups(conn: sqlite3.Connection, league: League, week: int, self_team
 
 def run() -> None:
     league = get_league()
+    league_id = str(config.ESPN_LEAGUE_ID)
     self_team_id = find_self_team_id(league)
 
     conn = sqlite3.connect(config.DB_PATH)
     try:
-        init_db(conn)
-        sync_teams(conn, league, self_team_id)
+        init_db(conn, league_id)
+        sync_teams(conn, league, league_id, self_team_id)
 
         for team in league.teams:
-            sync_roster(conn, team)
+            sync_roster(conn, team, league_id)
 
         for week in range(1, league.current_week + 1):
-            sync_matchups(conn, league, week, self_team_id)
+            sync_matchups(conn, league, league_id, week, self_team_id)
         conn.commit()
     finally:
         conn.close()

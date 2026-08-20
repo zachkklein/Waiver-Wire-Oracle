@@ -18,6 +18,7 @@ class SettingsPayload(BaseModel):
     ESPN_SWID: str | None = None
     ESPN_S2: str | None = None
     ESPN_TEAM_ID: str | None = None
+    label: str | None = None
     OPENROUTER_API_KEY: str | None = None
     OPENROUTER_MODEL: str | None = None
     RSS_FEED_URLS: list[str] | None = None

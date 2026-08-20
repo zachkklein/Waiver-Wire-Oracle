@@ -44,9 +44,7 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      <div className="hidden px-6 py-5 text-xs text-text-faint md:block">
-        Runs locally · one league
-      </div>
+      <div className="hidden px-6 py-5 text-xs text-text-faint md:block">Runs locally</div>
     </aside>
   )
 }

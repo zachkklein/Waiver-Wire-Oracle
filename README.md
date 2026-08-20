@@ -4,7 +4,7 @@ A personal fantasy football assistant that combines your ESPN league data, NFL p
 
 It runs entirely locally — a Python backend backed by SQLite and a local vector store, with an LLM agent that answers questions by calling tools rather than guessing from training data. You can use it as a terminal chat agent or through a local web app (FastAPI + React) that adds a dashboard for your roster, matchups, standings, player stats, and news alongside the same chat agent, streamed and rendered as markdown.
 
-It's built to be **self-hosted**: clone it, run it, and point it at your own league from a setup screen in the browser — no config files to edit, and your ESPN credentials never leave your machine.
+It's built to be **self-hosted**: clone it, run it, and point it at your own league from a setup screen in the browser — no config files to edit, and your ESPN credentials never leave your machine. You can add more than one ESPN league and switch between them from a dropdown in the app; the Oracle's OpenRouter key and news feeds are shared across all of them.
 
 ## How it works
 
@@ -29,8 +29,8 @@ frontend/src   ──▶  React web app (dashboard + chat) that talks to api/*.p
 - **`ingest/stats_sync.py`** — pulls weekly NFL player stats (yardage, TDs, targets, fantasy points) via [`nfl-data-py`](https://github.com/nflverse/nfl_data_py).
 - **`ingest/news_sync.py`** — pulls NFL news from RSS feeds, chunks it, and embeds it into a local [Chroma](https://www.trychroma.com/) vector store using Chroma's bundled local embedding model (no external embedding API needed). This is the RAG component: `search_news` retrieves relevant article snippets by semantic similarity, and the agent uses them as grounded context instead of relying on its own (possibly stale) knowledge.
 - **`agent/chat.py`** — a terminal chat loop. On each turn, the LLM decides whether it needs to call `query_stats`, `query_roster`, or `search_news`, executes the call, and reasons over the result before responding.
-- **`api/`** — a FastAPI app exposing the same tools as a JSON API (`/api/roster`, `/api/stats`, `/api/matchups`, `/api/teams`, `/api/news`, `/api/meta`), a streaming `/api/chat` endpoint that reuses `agent/chat.py`'s system prompt and tools, and `/api/settings` + `/api/sync` behind the Setup page.
-- **`frontend/`** — a React + Vite + TypeScript app: a dashboard (your team, matchup, standings), roster/matchup/standings/player/news pages, an "Oracle" chat page that streams the agent's responses and renders them as markdown, and a Setup page for connecting your league and running syncs.
+- **`api/`** — a FastAPI app exposing the same tools as a JSON API (`/api/roster`, `/api/stats`, `/api/matchups`, `/api/teams`, `/api/news`, `/api/meta`), a streaming `/api/chat` endpoint that reuses `agent/chat.py`'s system prompt and tools, `/api/settings` + `/api/sync` behind the Setup page, and `/api/leagues` for adding/switching/removing leagues.
+- **`frontend/`** — a React + Vite + TypeScript app: a dashboard (your team, matchup, standings), roster/matchup/standings/player/news pages, an "Oracle" chat page that streams the agent's responses and renders them as markdown, a Setup page for connecting your league and running syncs, and a league switcher dropdown in the top bar for multi-league setups.
 
 All three ingest scripts are safe to re-run — they upsert rather than duplicate, so you can re-sync as often as you like (e.g. weekly, or before each waiver decision).
 
@@ -76,9 +76,15 @@ Open `http://localhost:8000`. On a fresh install you'll land on the **Setup** pa
 
 Then hit **Sync everything** on the same page to pull in your league, player stats, and news. Player stats and news take a minute on the first run.
 
+### Multiple leagues
+
+You can connect more than one ESPN league to the same install. Use the league switcher dropdown in the top bar (shows your current league's name) → **+ Add another league**, fill in that league's ID/season/cookies/team, and it becomes the active league. Switching leagues from the dropdown re-scopes the whole app (roster, matchups, standings, Oracle) to that league's synced data — each league needs its own sync (Setup page → Sync everything) the first time you add it.
+
+Your OpenRouter API key/model and RSS news feeds are **shared** across every league — set those once from the Setup page while any league is active.
+
 ### Configuring without the UI
 
-Every setting also reads from environment variables / `.env`, which is handy for headless or container setups — copy `.env.example` to `.env` and fill in `ESPN_LEAGUE_ID`, `ESPN_SEASON`, `ESPN_SWID`, `ESPN_S2`, `ESPN_TEAM_ID`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `RSS_FEED_URLS` (comma-separated). Anything saved from the Setup page takes precedence over `.env`. Set `DATA_DIR` to move the SQLite file, Chroma store, and settings somewhere else (e.g. a mounted volume).
+Every setting also reads from environment variables / `.env`, which is handy for headless or container setups — copy `.env.example` to `.env` and fill in `ESPN_LEAGUE_ID`, `ESPN_SEASON`, `ESPN_SWID`, `ESPN_S2`, `ESPN_TEAM_ID`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `RSS_FEED_URLS` (comma-separated). Anything saved from the Setup page takes precedence over `.env`. `.env` only configures a single league (there's no `.env` equivalent for a second one — add it from the UI); a second league added from the UI is stored in `data/settings.json` even if your first one is still coming from `.env`. Set `DATA_DIR` to move the SQLite file, Chroma store, and settings somewhere else (e.g. a mounted volume).
 
 ### Refreshing your data
 
@@ -141,8 +147,8 @@ waiver-wire-oracle/
 ├── .env                  # optional config for headless setups (gitignored)
 ├── config.py              # resolves settings: settings.json -> .env -> defaults
 ├── data/                  # all gitignored
-│   ├── settings.json       # written by the Setup page (league ID, cookies, API key)
-│   ├── db.sqlite           # teams, rosters, matchups, player_stats
+│   ├── settings.json       # written by the Setup page (leagues list, active league, API key)
+│   ├── db.sqlite           # teams/rosters/matchups (keyed by league_id), player_stats
 │   └── chroma/              # embedded news vector store
 ├── ingest/
 │   ├── espn_sync.py         # ESPN league → SQLite
@@ -157,7 +163,7 @@ waiver-wire-oracle/
 ├── api/
 │   ├── main.py                # FastAPI app (mounts routers + serves frontend/dist in prod)
 │   ├── chat_service.py         # streaming version of agent/chat.py's tool loop
-│   └── routers/                # league, stats, news, meta, chat, settings
+│   └── routers/                # league, leagues, stats, news, meta, chat, settings
 ├── frontend/
 │   ├── src/pages/               # Dashboard, Roster, Matchups, Standings, Players, News, Chat, Setup
 │   ├── src/components/          # shared UI (badges, cards, chat bubbles, markdown rendering)
@@ -169,8 +175,8 @@ Each `tools/*.py` file also works as a standalone CLI for testing — run any of
 
 ## Status
 
-This is an active personal project, built to be cloned and self-hosted. Currently implemented: ESPN/stats/news ingestion, SQL and vector-search query tools, a terminal chat agent, a unified `main.py` CLI, a local web app (FastAPI + React) covering the dashboard, roster, matchups, standings, players, news, and a streaming chat page, and an in-app Setup page so a fresh clone can be configured entirely from the browser.
+This is an active personal project, built to be cloned and self-hosted. Currently implemented: ESPN/stats/news ingestion, SQL and vector-search query tools, a terminal chat agent, a unified `main.py` CLI, a local web app (FastAPI + React) covering the dashboard, roster, matchups, standings, players, news, and a streaming chat page, an in-app Setup page so a fresh clone can be configured entirely from the browser, and support for multiple ESPN leagues (add/switch/remove from a top-bar dropdown) against the same install.
 
-Not built, by design: there's **no authentication and no multi-user support** — it assumes one person running one copy against one league, and anyone who can reach the URL gets full access to your league data and can spend your OpenRouter credits. Don't expose it to the open internet without putting something in front of it (a private network like Tailscale, or an identity proxy like Cloudflare Access).
+Not built, by design: there's **no authentication and no multi-user support** — it assumes one person running one copy, and anyone who can reach the URL gets full access to every league you've added and can spend your OpenRouter credits. Multiple *leagues* are supported, but not multiple *users*: only one league is "active" (queried/chatted-about) at a time, and there's no per-visitor session, so everyone hitting the URL sees and switches the same active league. Don't expose it to the open internet without putting something in front of it (a private network like Tailscale, or an identity proxy like Cloudflare Access).
 
 Worth knowing: ESPN publishes no official fantasy API. `espn-api` works against undocumented internal endpoints, so ESPN can change or block them without notice, and there's no "Sign in with ESPN" to integrate — private leagues require copying two cookies by hand.

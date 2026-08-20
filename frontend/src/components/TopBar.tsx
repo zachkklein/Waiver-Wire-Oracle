@@ -1,13 +1,12 @@
 import type { Meta } from "../lib/types"
 import { timeAgo } from "../lib/format"
+import LeagueSwitcher from "./LeagueSwitcher"
 import TeamBadge from "./TeamBadge"
 
 export default function TopBar({ meta }: { meta: Meta | null }) {
   return (
     <header className="flex h-[72px] shrink-0 items-center justify-between gap-4 border-b border-border bg-surface px-4 md:px-8">
-      <div className="font-display soft text-lg font-semibold text-text">
-        {meta?.current_week ? `Week ${meta.current_week}` : "Preseason"}
-      </div>
+      <LeagueSwitcher />
 
       <div className="flex items-center gap-3">
         <span className="hidden items-center gap-2 rounded-full bg-surface-raised px-3.5 py-2 text-xs font-medium text-text-muted sm:flex">

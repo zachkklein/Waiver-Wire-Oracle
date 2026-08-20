@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { api } from "../lib/api"
 import type { LeaguePreview, Settings, SyncStatus, SyncTarget } from "../lib/types"
 import PageHeader from "../components/PageHeader"
@@ -24,6 +25,9 @@ const inputClass =
   "w-full rounded-xl border border-border bg-surface-raised px-4 py-2.5 text-sm text-text placeholder:text-text-faint focus:border-accent focus:outline-none"
 
 export default function SetupPage() {
+  const [searchParams] = useSearchParams()
+  const isNew = searchParams.get("new") === "1"
+
   const [settings, setSettings] = useState<Settings | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -53,15 +57,19 @@ export default function SetupPage() {
       .settings()
       .then((s) => {
         setSettings(s)
-        setLeagueId(s.ESPN_LEAGUE_ID)
-        if (s.ESPN_SEASON) setSeason(s.ESPN_SEASON)
-        setTeamId(s.ESPN_TEAM_ID)
+        // Adding another league starts from a blank league form — only the shared
+        // Oracle/news fields (hidden in this mode anyway) come from existing settings.
+        if (!isNew) {
+          setLeagueId(s.ESPN_LEAGUE_ID)
+          if (s.ESPN_SEASON) setSeason(s.ESPN_SEASON)
+          setTeamId(s.ESPN_TEAM_ID)
+          setIsPrivate(s.has_espn_swid || s.has_espn_s2)
+        }
         setModel(s.OPENROUTER_MODEL)
         setFeeds(s.RSS_FEED_URLS.join("\n"))
-        setIsPrivate(s.has_espn_swid || s.has_espn_s2)
       })
       .catch((e) => setLoadError(String(e)))
-  }, [])
+  }, [isNew])
 
   // Poll while a sync is running so the progress list stays live.
   useEffect(() => {
@@ -106,6 +114,21 @@ export default function SetupPage() {
     setSaveError(null)
     setSaved(false)
     try {
+      if (isNew) {
+        await api.addLeague({
+          ESPN_LEAGUE_ID: leagueId.trim(),
+          ESPN_SEASON: season.trim(),
+          label: preview?.league_name ?? undefined,
+          ESPN_TEAM_ID: teamId || undefined,
+          ...(isPrivate && swid.trim() ? { ESPN_SWID: swid.trim() } : {}),
+          ...(isPrivate && s2.trim() ? { ESPN_S2: s2.trim() } : {}),
+        })
+        // The new league is now active — reload into the plain setup flow (no ?new)
+        // for it, so the "Pull in data" card syncs it.
+        window.location.href = "/setup"
+        return
+      }
+
       const updated = await api.saveSettings({
         ESPN_LEAGUE_ID: leagueId.trim(),
         ESPN_SEASON: season.trim(),
@@ -115,6 +138,7 @@ export default function SetupPage() {
           .split("\n")
           .map((f) => f.trim())
           .filter(Boolean),
+        ...(preview?.league_name ? { label: preview.league_name } : {}),
         // Secrets are only sent when newly typed, so blanks don't wipe stored values.
         ...(isPrivate && swid.trim() ? { ESPN_SWID: swid.trim() } : {}),
         ...(isPrivate && s2.trim() ? { ESPN_S2: s2.trim() } : {}),
@@ -144,8 +168,12 @@ export default function SetupPage() {
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
-        title="Setup"
-        eyebrow="Connect your ESPN league and pull in data. Everything is stored locally in data/settings.json."
+        title={isNew ? "Add another league" : "Setup"}
+        eyebrow={
+          isNew
+            ? "Connect another ESPN league. Your OpenRouter key and news feeds are shared across leagues — manage those from the main Setup page."
+            : "Connect your ESPN league and pull in data. Everything is stored locally in data/settings.json."
+        }
       />
 
       <div className="flex flex-col gap-5">
@@ -200,24 +228,34 @@ export default function SetupPage() {
                   machine and are never sent anywhere but ESPN.
                 </p>
                 <div>
-                  <Label hint={settings.has_espn_swid ? "Already saved — type to replace it." : undefined}>
+                  <Label
+                    hint={
+                      !isNew && settings.has_espn_swid ? "Already saved — type to replace it." : undefined
+                    }
+                  >
                     SWID
                   </Label>
                   <input
                     value={swid}
                     onChange={(e) => setSwid(e.target.value)}
-                    placeholder={settings.has_espn_swid ? "••••••••" : "{XXXXXXXX-XXXX-...}"}
+                    placeholder={
+                      !isNew && settings.has_espn_swid ? "••••••••" : "{XXXXXXXX-XXXX-...}"
+                    }
                     className={inputClass}
                   />
                 </div>
                 <div>
-                  <Label hint={settings.has_espn_s2 ? "Already saved — type to replace it." : undefined}>
+                  <Label
+                    hint={
+                      !isNew && settings.has_espn_s2 ? "Already saved — type to replace it." : undefined
+                    }
+                  >
                     espn_s2
                   </Label>
                   <input
                     value={s2}
                     onChange={(e) => setS2(e.target.value)}
-                    placeholder={settings.has_espn_s2 ? "••••••••" : "AEB..."}
+                    placeholder={!isNew && settings.has_espn_s2 ? "••••••••" : "AEB..."}
                     className={inputClass}
                   />
                 </div>
@@ -246,7 +284,7 @@ export default function SetupPage() {
         {preview && (
           <Card title="Which team is yours?">
             <p className="mb-4 text-sm leading-relaxed text-text-muted">
-              {settings.has_espn_swid
+              {(isNew ? swid.trim() : settings.has_espn_swid)
                 ? "Optional — your team is already identified from your SWID cookie. Pick one only if you want to override that."
                 : "Public leagues can't detect this automatically, so choose your team here."}
             </p>
@@ -274,49 +312,53 @@ export default function SetupPage() {
           </Card>
         )}
 
-        <Card title="The Oracle">
-          <div className="flex flex-col gap-4">
-            <div>
-              <Label
-                hint={
-                  settings.has_openrouter_api_key
-                    ? "Already saved — type to replace it."
-                    : "Create one at openrouter.ai → Keys. Needed for the chat page only."
-                }
-              >
-                OpenRouter API key
-              </Label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={settings.has_openrouter_api_key ? "••••••••" : "sk-or-..."}
-                className={inputClass}
-              />
+        {!isNew && (
+          <Card title="The Oracle">
+            <div className="flex flex-col gap-4">
+              <div>
+                <Label
+                  hint={
+                    settings.has_openrouter_api_key
+                      ? "Already saved — type to replace it."
+                      : "Create one at openrouter.ai → Keys. Needed for the chat page only."
+                  }
+                >
+                  OpenRouter API key
+                </Label>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={settings.has_openrouter_api_key ? "••••••••" : "sk-or-..."}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <Label hint="Any tool-calling model OpenRouter offers.">Model</Label>
+                <input
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder="qwen/qwen3.7-flash"
+                  className={inputClass}
+                />
+              </div>
             </div>
-            <div>
-              <Label hint="Any tool-calling model OpenRouter offers.">Model</Label>
-              <input
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="qwen/qwen3.7-flash"
-                className={inputClass}
-              />
-            </div>
-          </div>
-        </Card>
+          </Card>
+        )}
 
-        <Card title="News feeds">
-          <Label hint="One RSS URL per line. These are searched on the News page and by the Oracle.">
-            Feeds
-          </Label>
-          <textarea
-            value={feeds}
-            onChange={(e) => setFeeds(e.target.value)}
-            rows={5}
-            className={`${inputClass} resize-y font-mono text-xs`}
-          />
-        </Card>
+        {!isNew && (
+          <Card title="News feeds">
+            <Label hint="One RSS URL per line. These are searched on the News page and by the Oracle.">
+              Feeds
+            </Label>
+            <textarea
+              value={feeds}
+              onChange={(e) => setFeeds(e.target.value)}
+              rows={5}
+              className={`${inputClass} resize-y font-mono text-xs`}
+            />
+          </Card>
+        )}
 
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -324,76 +366,78 @@ export default function SetupPage() {
             disabled={saving}
             className="pressable rounded-full bg-accent px-7 py-3 text-sm font-bold text-bg hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
           >
-            {saving ? "Saving" : "Save settings"}
+            {saving ? (isNew ? "Adding" : "Saving") : isNew ? "Add league" : "Save settings"}
           </button>
           {saved && <span className="text-sm text-status-good">Saved</span>}
         </div>
 
         {saveError && <ErrorState message={saveError} />}
 
-        <Card title="Pull in data">
-          <p className="mb-4 text-sm leading-relaxed text-text-muted">
-            Save your settings first, then sync. The league takes a few seconds; player stats and
-            news take longer on the first run.
-          </p>
-          <div className="flex flex-wrap gap-2.5">
-            <button
-              onClick={() => runSync()}
-              disabled={sync?.running || !settings.configured}
-              className="pressable rounded-full bg-accent px-6 py-2.5 text-sm font-bold text-bg hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-            >
-              {sync?.running ? "Syncing" : "Sync everything"}
-            </button>
-            {(["espn", "stats", "news"] as SyncTarget[]).map((t) => (
+        {!isNew && (
+          <Card title="Pull in data">
+            <p className="mb-4 text-sm leading-relaxed text-text-muted">
+              Save your settings first, then sync. The league takes a few seconds; player stats and
+              news take longer on the first run.
+            </p>
+            <div className="flex flex-wrap gap-2.5">
               <button
-                key={t}
-                onClick={() => runSync([t])}
+                onClick={() => runSync()}
                 disabled={sync?.running || !settings.configured}
-                className="rounded-full bg-surface-raised px-5 py-2.5 text-sm font-semibold text-text-muted transition-colors hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                className="pressable rounded-full bg-accent px-6 py-2.5 text-sm font-bold text-bg hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
               >
-                {SYNC_LABELS[t]}
+                {sync?.running ? "Syncing" : "Sync everything"}
               </button>
-            ))}
-          </div>
+              {(["espn", "stats", "news"] as SyncTarget[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => runSync([t])}
+                  disabled={sync?.running || !settings.configured}
+                  className="rounded-full bg-surface-raised px-5 py-2.5 text-sm font-semibold text-text-muted transition-colors hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {SYNC_LABELS[t]}
+                </button>
+              ))}
+            </div>
 
-          {sync && (
-            <div className="mt-5 flex flex-col gap-2">
-              {(["espn", "stats", "news"] as SyncTarget[]).map((t) => {
-                const result = sync.results[t]
-                if (!result && !sync.running) return null
-                return (
-                  <div
-                    key={t}
-                    className="flex items-start gap-3 rounded-xl bg-surface-raised px-4 py-3 text-sm"
-                  >
-                    <span
-                      className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
-                        !result
-                          ? "animate-pulse bg-accent"
-                          : result.ok
-                            ? "bg-status-good"
-                            : "bg-status-bad"
-                      }`}
-                    />
-                    <span className="font-semibold text-text">{SYNC_LABELS[t]}</span>
-                    <span className={result?.ok === false ? "text-status-bad" : "text-text-muted"}>
-                      {result ? result.detail : "Working…"}
-                    </span>
-                  </div>
-                )
-              })}
-              {sync.finished_at && !sync.running && (
-                <p className="text-sm text-text-muted">
-                  Done. Head to the{" "}
-                  <a href="/" className="font-semibold text-accent hover:underline">
-                    dashboard
+            {sync && (
+              <div className="mt-5 flex flex-col gap-2">
+                {(["espn", "stats", "news"] as SyncTarget[]).map((t) => {
+                  const result = sync.results[t]
+                  if (!result && !sync.running) return null
+                  return (
+                    <div
+                      key={t}
+                      className="flex items-start gap-3 rounded-xl bg-surface-raised px-4 py-3 text-sm"
+                    >
+                      <span
+                        className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                          !result
+                            ? "animate-pulse bg-accent"
+                            : result.ok
+                              ? "bg-status-good"
+                              : "bg-status-bad"
+                        }`}
+                      />
+                      <span className="font-semibold text-text">{SYNC_LABELS[t]}</span>
+                      <span className={result?.ok === false ? "text-status-bad" : "text-text-muted"}>
+                        {result ? result.detail : "Working…"}
+                      </span>
+                    </div>
+                  )
+                })}
+                {sync.finished_at && !sync.running && (
+                  <p className="text-sm text-text-muted">
+                    Done. Head to the{" "}
+                    <a href="/" className="font-semibold text-accent hover:underline">
+                      dashboard
                   </a>
                   .
                 </p>
               )}
             </div>
           )}
-        </Card>
+          </Card>
+        )}
       </div>
     </div>
   )

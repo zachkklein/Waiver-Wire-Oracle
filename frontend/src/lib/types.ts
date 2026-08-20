@@ -114,6 +114,7 @@ export interface SettingsPayload {
   ESPN_SWID?: string
   ESPN_S2?: string
   ESPN_TEAM_ID?: string
+  label?: string
   OPENROUTER_API_KEY?: string
   OPENROUTER_MODEL?: string
   RSS_FEED_URLS?: string[]
@@ -123,6 +124,24 @@ export interface LeaguePreview {
   league_name: string | null
   current_week: number
   teams: { team_id: number; team_name: string }[]
+}
+
+export interface League {
+  league_id: string
+  label: string
+  season: string
+  active: boolean
+  has_espn_swid: boolean
+  has_espn_s2: boolean
+}
+
+export interface NewLeaguePayload {
+  ESPN_LEAGUE_ID: string
+  ESPN_SEASON: string
+  label?: string
+  ESPN_SWID?: string
+  ESPN_S2?: string
+  ESPN_TEAM_ID?: string
 }
 
 export type SyncTarget = "espn" | "stats" | "news"
