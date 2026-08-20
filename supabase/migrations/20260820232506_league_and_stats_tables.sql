@@ -77,9 +77,9 @@ CREATE TABLE IF NOT EXISTS player_stats (
     PRIMARY KEY (player_id, season, week, season_type)
 );
 
--- Indexes the app's access patterns actually use. SQLite got by on table scans at
--- this size; Postgres may as well have them.
-CREATE INDEX IF NOT EXISTS rosters_league_team_idx ON rosters (league_id, team_id);
-CREATE INDEX IF NOT EXISTS matchups_league_week_idx ON matchups (league_id, week);
+-- Indexes for access patterns the primary keys don't already cover. Note there is
+-- deliberately no index on (league_id, team_id) for rosters or (league_id, week) for
+-- matchups: each is a leftmost prefix of that table's PK, so the PK index serves it.
+-- See 20260821000000_drop_redundant_prefix_indexes.sql.
 CREATE INDEX IF NOT EXISTS player_stats_display_name_idx ON player_stats (player_display_name);
 CREATE INDEX IF NOT EXISTS player_stats_season_week_idx ON player_stats (season, week);
