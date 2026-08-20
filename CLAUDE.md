@@ -48,7 +48,7 @@ There is no test suite or linter configured for the Python side yet. The fronten
 
 ## Architecture
 
-**Data flow:** three `ingest/*.py` scripts populate two local stores, which three `tools/*.py` modules read from, which `agent/chat.py` exposes to an LLM as tools:
+**Data flow:** three `ingest/*.py` scripts populate two stores, which three `tools/*.py` modules read from, which `agent/chat.py` exposes to an LLM as tools:
 
 ```
 espn_sync.py   ──┐
@@ -67,6 +67,17 @@ frontend/src   ─→ React/Vite app consuming api/*.py over /api/*
 ```
 
 All config is centralized in `config.py`. Paths (`DATA_DIR`, `DB_PATH`, `CHROMA_PATH`) and `OPENROUTER_BASE_URL` are plain module constants; everything a user can change is read fresh from disk in priority order: `data/settings.json` (written by the in-app Setup page) → env/`.env` → built-in defaults. Saving from the Setup page (or switching the active league) therefore takes effect without restarting the server — **don't convert these into module-level constants**, and don't add new user-settable values without adding them to `LEAGUE_FIELDS` (if it varies per league) or `GLOBAL_SETTING_KEYS` (if it's shared) — both are folded into `SETTING_KEYS`. `save_settings()` merges (ignoring `None`) and writes atomically, so the UI can omit unchanged secrets rather than blanking them.
+
+**Two database backends (`db.py`)** — everything goes through `db.connect()` / `db.session()`, never `sqlite3` directly (`sqlite3` is imported in exactly one file, and it should stay that way). With `DATABASE_URL` unset the app uses the local `data/db.sqlite`, so `git clone && main.py serve` still needs no external services; set it and the same code runs on Postgres (Supabase, for the hosted build). Rules that keep this working:
+- **Write SQL in SQLite's `?` placeholder style.** `db._to_pg()` rewrites it for psycopg, doubling literal `%` and converting `?` outside string literals. Never hand-write `%s`.
+- **Read rows by name** (`row["team_name"]`), never by index — `sqlite3.Row` supports both, psycopg's `dict_row` only the former.
+- **Keep DDL in the subset both backends share**: `CREATE TABLE IF NOT EXISTS`, `TEXT`/`INTEGER`/`REAL`, composite `PRIMARY KEY`, `ON CONFLICT (...) DO UPDATE SET x = excluded.x`. One schema string then runs on both, which is why `init_db()` is a harmless no-op against Postgres.
+- **Booleans stay `INTEGER` 0/1, not Postgres `BOOLEAN`** — the frontend renders them with a ternary and expects a number (see the `is_self` note below).
+- Backend-specific introspection lives behind `db.table_names()`, `db.column_names()` and `db.is_initialized()` (the last replaces the old `os.path.exists(DB_PATH)` check, which only made sense for a file).
+
+Schema changes go in `supabase/migrations/*.sql` **and** the `SCHEMA` string in the relevant `ingest/*.py`, which must stay identical. `scripts/migrate_to_postgres.py` copies an existing SQLite database over (idempotent, upserts on primary keys); `player_stats` and the news store are global, so they can equally just be re-synced.
+
+Supabase exposes every `public` table through PostgREST using the anon key that ships in the browser. All tables therefore have **RLS enabled with no policies** — the backend connects directly to Postgres as the table owner and bypasses RLS, so this denies the REST API without affecting the app. The database linter reporting `rls_enabled_no_policy` at INFO is the intended state, not a bug to fix.
 
 **Contexts, not globals (`context.py`)** — there is deliberately **no `config.ESPN_LEAGUE_ID` attribute**; reading one raises `AttributeError`. "The active league" is a property of the *process*, which stops being meaningful the moment two people use a hosted build at once (see `docs/HOSTED_PLAN.md`). Instead `config.load_league_ctx()` returns a frozen `LeagueCtx` (league_id/season/swid/s2/team_id, plus `.key` for scoping SQL, `.is_configured`, and `.espn_cookies`) and `config.load_user_ctx()` a `UserCtx` (OpenRouter key + model); callers take one as an argument. `config.rss_feed_urls()` stays a plain module read — news feeds are global infrastructure config, not per-user. In `api/`, routers depend on `LeagueDep`/`UserDep` from `api/deps.py` rather than calling the loaders directly: those two dependency functions are the single seam that the hosted build swaps for a JWT → `user_leagues` lookup. Don't reintroduce a module-level "current league" in any form.
 

@@ -1,10 +1,9 @@
 # App-level metadata: setup state, current week, self team, last-synced timestamps.
-import os
-import sqlite3
 
 from fastapi import APIRouter
 
 import config
+import db
 from api.deps import LeagueDep
 
 router = APIRouter(prefix="/api", tags=["meta"])
@@ -23,19 +22,15 @@ def _empty(has_data: bool = False) -> dict:
 
 @router.get("/meta")
 def get_meta(league: LeagueDep):
-    # A fresh install has no database until the first sync runs.
-    if not os.path.exists(config.DB_PATH):
+    # A fresh install has no tables until the first sync runs.
+    if not db.is_initialized():
         return _empty()
 
     league_id = league.key
 
-    conn = sqlite3.connect(config.DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = db.connect()
     try:
-        tables = {
-            row["name"]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
+        tables = db.table_names(conn)
         if "teams" not in tables:
             # Possible when only stats or news have been synced so far.
             return _empty()

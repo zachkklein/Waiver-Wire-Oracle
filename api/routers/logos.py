@@ -6,13 +6,13 @@
 # them, so every logo is fetched here instead and cached under data/logos/.
 import hashlib
 import os
-import sqlite3
 from urllib.parse import urlparse
 
 import requests
 from fastapi import APIRouter, HTTPException, Response
 
 import config
+import db
 from api.deps import LeagueDep
 from context import LeagueCtx
 
@@ -45,19 +45,17 @@ def _allowed(url: str) -> bool:
 
 
 def _lookup_logo_url(league_id: str, team_id: int) -> str | None:
-    if not os.path.exists(config.DB_PATH):
+    if not db.is_initialized():
         return None
-    conn = sqlite3.connect(config.DB_PATH)
-    try:
-        row = conn.execute(
-            "SELECT logo_url FROM teams WHERE league_id = ? AND team_id = ?",
-            (league_id, team_id),
-        ).fetchone()
-    except sqlite3.OperationalError:
-        return None  # teams table not created yet
-    finally:
-        conn.close()
-    return row[0] if row and row[0] else None
+    with db.session() as conn:
+        try:
+            row = conn.execute(
+                "SELECT logo_url FROM teams WHERE league_id = ? AND team_id = ?",
+                (league_id, team_id),
+            ).fetchone()
+        except Exception:
+            return None  # teams table not created yet
+    return row["logo_url"] if row and row["logo_url"] else None
 
 
 def _cached_path(league_id: str, team_id: int, url: str) -> str | None:

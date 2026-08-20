@@ -161,6 +161,32 @@ worth a thin layer rather than a find-and-replace. Retire the hand-rolled
 
 **Done when:** same app, Postgres-backed, still single user.
 
+**Status: done.** Supabase project `waiver-wire-oracle` (`mvuofakhicvdftbfouyy`,
+us-east-1) in the LevanSystems org, $0/mo. Schema is in
+`supabase/migrations/*.sql`, applied and mirrored in the repo:
+`teams`/`rosters`/`matchups`/`player_stats` unchanged, plus `users`, `leagues`,
+`user_leagues`, `user_settings`.
+
+Rather than a find-and-replace of `?` -> `%s`, `db.py` supports **both** backends:
+`DATABASE_URL` unset keeps the local SQLite file (self-hosting survives), set
+switches to Postgres. SQL stays in `?` style and is translated per backend, so there
+is one copy of every query. `sqlite3` is now imported in exactly one file.
+
+RLS is enabled on every table with **no policies** — the backend connects as the
+table owner and bypasses RLS, so this closes the publicly-reachable PostgREST API
+without affecting the app.
+
+Verified: the app's exact queries (standings, self-team, lineup ordering with its
+`CASE WHEN lineup_slot = 'BE'` sort, `LIKE` team match, max-week, matchup join) all
+run on Postgres and return values identical to SQLite, with `is_self` coming back as
+`integer` rather than `boolean` as the frontend requires. The SQLite path still 200s
+on every endpoint.
+
+**Remaining:** the app can't be pointed at Postgres until `DATABASE_URL` is set,
+which needs the database password (Supabase dashboard -> Project Settings ->
+Database). Migrations and verification above went through the Supabase management
+API, which doesn't expose that password.
+
 ### Phase 3 — Auth and onboarding *(~2–3 days)*
 
 Supabase Auth (magic link or Google) issues a JWT; a FastAPI dependency verifies

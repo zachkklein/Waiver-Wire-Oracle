@@ -1,6 +1,5 @@
 # Pulls roster/matchups/scores from ESPN via espn-api and stores them in SQLite.
 import os
-import sqlite3
 import sys
 from datetime import datetime, timezone
 
@@ -8,6 +7,7 @@ from espn_api.football import League
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+import db
 from context import LeagueCtx
 
 # league_id is ESPN's own league id (as a string) — it's already globally unique, so it
@@ -78,19 +78,20 @@ def get_league(ctx: LeagueCtx) -> League:
     )
 
 
-def _migrate_legacy_tables(conn: sqlite3.Connection, league_id: str) -> None:
+def _migrate_legacy_tables(conn, league_id: str) -> None:
     """One-time upgrade for databases created before multi-league support: tables
     without a league_id column get renamed aside, recreated with the new schema, and
     their existing rows backfilled with `league_id` (the only league that data could
-    have belonged to)."""
-    existing = {
-        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-    }
+    have belonged to).
+
+    Only ever finds work to do on a long-lived SQLite file — a Postgres database is
+    created from the current schema, so there's nothing pre-multi-league to fix."""
+    existing = db.table_names(conn)
     to_migrate = []
     for table in ("teams", "rosters", "matchups"):
         if table not in existing:
             continue
-        cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+        cols = db.column_names(conn, table)
         if "league_id" in cols:
             continue
         conn.execute(f"ALTER TABLE {table} RENAME TO {table}_legacy")
@@ -113,15 +114,15 @@ def _migrate_legacy_tables(conn: sqlite3.Connection, league_id: str) -> None:
 ADDED_COLUMNS = {"teams": [("logo_url", "TEXT")]}
 
 
-def _migrate_added_columns(conn: sqlite3.Connection) -> None:
+def _migrate_added_columns(conn) -> None:
     for table, columns in ADDED_COLUMNS.items():
-        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        existing = set(db.column_names(conn, table))
         for name, decl in columns:
             if name not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
-def init_db(conn: sqlite3.Connection, league_id: str) -> None:
+def init_db(conn, league_id: str) -> None:
     _migrate_legacy_tables(conn, league_id)
     conn.executescript(SCHEMA)
     _migrate_added_columns(conn)
@@ -152,7 +153,7 @@ def find_self_team_id(league: League, ctx: LeagueCtx) -> int | None:
 
 
 def sync_teams(
-    conn: sqlite3.Connection, league: League, league_id: str, self_team_id: int | None
+    conn, league: League, league_id: str, self_team_id: int | None
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     rows = [
@@ -191,7 +192,7 @@ def sync_teams(
     )
 
 
-def sync_roster(conn: sqlite3.Connection, team, league_id: str) -> None:
+def sync_roster(conn, team, league_id: str) -> None:
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         "DELETE FROM rosters WHERE league_id = ? AND team_id = ?", (league_id, team.team_id)
@@ -225,7 +226,7 @@ def sync_roster(conn: sqlite3.Connection, team, league_id: str) -> None:
 
 
 def sync_matchups(
-    conn: sqlite3.Connection, league: League, league_id: str, week: int, self_team_id: int | None
+    conn, league: League, league_id: str, week: int, self_team_id: int | None
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     box_scores = league.box_scores(week=week)
@@ -279,7 +280,7 @@ def run(ctx: LeagueCtx | None = None) -> None:
 
     config.sync_league_name(league_id, getattr(league.settings, "name", None))
 
-    conn = sqlite3.connect(config.DB_PATH)
+    conn = db.connect()
     try:
         init_db(conn, league_id)
         sync_teams(conn, league, league_id, self_team_id)

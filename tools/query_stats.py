@@ -2,11 +2,10 @@
 import argparse
 import json
 import os
-import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import config
+import db
 from context import LeagueCtx  # noqa: F401  (used in a type hint)
 
 NUMERIC_COLUMNS = [
@@ -132,8 +131,7 @@ def query_stats(
 
     where_clause = f"WHERE {' AND '.join(where)}" if where else ""
 
-    conn = sqlite3.connect(config.DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = db.connect()
     try:
         if aggregate:
             agg_cols = ", ".join(f"SUM({c}) AS {c}" for c in NUMERIC_COLUMNS)

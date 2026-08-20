@@ -23,16 +23,11 @@ def _migrate_db() -> None:
     league = config.load_league_ctx()
     if not league.league_id:
         return
-    import sqlite3
-
+    import db
     from ingest import espn_sync
 
-    conn = sqlite3.connect(config.DB_PATH)
-    try:
+    with db.session(commit=True) as conn:
         espn_sync.init_db(conn, league.key)
-        conn.commit()
-    finally:
-        conn.close()
 
 app.add_middleware(
     CORSMiddleware,

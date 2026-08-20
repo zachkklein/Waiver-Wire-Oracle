@@ -2,11 +2,11 @@
 import argparse
 import json
 import os
-import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+import db
 from context import LeagueCtx
 
 TOOL_SCHEMA = {
@@ -48,7 +48,7 @@ TOOL_SCHEMA = {
 }
 
 
-def _resolve_team(conn: sqlite3.Connection, league_id: str, team_query: str | None):
+def _resolve_team(conn, league_id: str, team_query: str | None):
     if team_query:
         row = conn.execute(
             "SELECT * FROM teams WHERE league_id = ? AND team_name LIKE ? ORDER BY team_id LIMIT 1",
@@ -61,7 +61,7 @@ def _resolve_team(conn: sqlite3.Connection, league_id: str, team_query: str | No
     return dict(row) if row else None
 
 
-def _get_teams(conn: sqlite3.Connection, league_id: str, include_logos: bool) -> dict:
+def _get_teams(conn, league_id: str, include_logos: bool) -> dict:
     # logo_url is for the web UI only — it's noise in the LLM's tool results, so it's
     # opt-in rather than always selected.
     logo_col = ", logo_url" if include_logos else ""
@@ -78,7 +78,7 @@ def _get_teams(conn: sqlite3.Connection, league_id: str, include_logos: bool) ->
 
 
 def _get_roster(
-    conn: sqlite3.Connection, league_id: str, team_query: str | None, include_logos: bool
+    conn, league_id: str, team_query: str | None, include_logos: bool
 ) -> dict:
     team_row = _resolve_team(conn, league_id, team_query)
     if not team_row:
@@ -120,7 +120,7 @@ def _get_roster(
 
 
 def _get_matchup(
-    conn: sqlite3.Connection,
+    conn,
     league_id: str,
     team_query: str | None,
     week: int | None,
@@ -188,8 +188,7 @@ def query_roster(
     view = (view or "roster").lower()
     league_id = league.key
 
-    conn = sqlite3.connect(config.DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = db.connect()
     try:
         if view == "teams":
             return _get_teams(conn, league_id, include_logos)

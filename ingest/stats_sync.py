@@ -1,6 +1,5 @@
 # Pulls nflverse weekly player stats via nfl-data-py and stores them in SQLite.
 import os
-import sqlite3
 import sys
 from datetime import datetime, timezone
 
@@ -10,6 +9,7 @@ import nfl_data_py as nfl
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+import db
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS player_stats (
@@ -70,7 +70,7 @@ COLUMNS = [
 ]
 
 
-def init_db(conn: sqlite3.Connection) -> None:
+def init_db(conn) -> None:
     conn.executescript(SCHEMA)
 
 
@@ -99,7 +99,7 @@ def fetch_weekly_stats(years: list[int]) -> pd.DataFrame:
     return df[COLUMNS]
 
 
-def sync_player_stats(conn: sqlite3.Connection, years: list[int]) -> int:
+def sync_player_stats(conn, years: list[int]) -> int:
     df = fetch_weekly_stats(years)
     now = datetime.now(timezone.utc).isoformat()
 
@@ -130,7 +130,7 @@ def run(years: list[int] | None = None, default_season: str | int | None = None)
             raise RuntimeError("ESPN_SEASON must be set in .env, or pass years explicitly")
         years = [int(default_season)]
 
-    conn = sqlite3.connect(config.DB_PATH)
+    conn = db.connect()
     try:
         init_db(conn)
         row_count = sync_player_stats(conn, years)

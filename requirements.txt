@@ -6,3 +6,4 @@ feedparser
 python-dotenv
 fastapi
 uvicorn[standard]
+psycopg[binary]
