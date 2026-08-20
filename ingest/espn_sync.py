@@ -257,6 +257,8 @@ def run() -> None:
     league_id = str(config.ESPN_LEAGUE_ID)
     self_team_id = find_self_team_id(league)
 
+    config.sync_league_name(league_id, getattr(league.settings, "name", None))
+
     conn = sqlite3.connect(config.DB_PATH)
     try:
         init_db(conn, league_id)

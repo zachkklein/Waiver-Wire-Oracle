@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { Link } from "react-router-dom"
 import { api } from "../lib/api"
 import type { Team } from "../lib/types"
 import PageHeader from "../components/PageHeader"
@@ -82,7 +83,10 @@ export default function StandingsPage() {
                     </span>
                   </td>
                   <td className="py-3.5">
-                    <div className="flex items-center gap-3">
+                    <Link
+                      to={t.is_self ? "/roster" : `/roster?team=${encodeURIComponent(t.team_name)}`}
+                      className="flex items-center gap-3 hover:underline"
+                    >
                       <TeamBadge name={t.team_name} seed={t.team_id} size="sm" />
                       <span
                         className={`text-sm ${
@@ -91,7 +95,7 @@ export default function StandingsPage() {
                       >
                         {t.team_name}
                       </span>
-                    </div>
+                    </Link>
                   </td>
                   <td className="py-3.5 pr-6 text-right text-sm font-bold tabular-nums text-text">
                     {t.wins}-{t.losses}

@@ -92,16 +92,17 @@ export default function DashboardPage() {
           }
         >
           {ranked.slice(0, 6).map((t, i) => (
-            <div
+            <Link
               key={t.team_id}
-              className={`flex items-center gap-3 rounded-xl px-2 py-2 ${
+              to={t.is_self ? "/roster" : `/roster?team=${encodeURIComponent(t.team_name)}`}
+              className={`flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-surface-raised ${
                 t.is_self ? "bg-accent/10" : ""
               }`}
             >
               <span className="w-4 text-xs font-semibold tabular-nums text-text-faint">{i + 1}</span>
               <TeamBadge name={t.team_name} seed={t.team_id} size="sm" />
               <span
-                className={`flex-1 truncate text-sm ${
+                className={`flex-1 truncate text-sm hover:underline ${
                   t.is_self ? "font-semibold text-accent" : "text-text-muted"
                 }`}
               >
@@ -110,7 +111,7 @@ export default function DashboardPage() {
               <span className="text-sm font-semibold tabular-nums text-text">
                 {t.wins}-{t.losses}
               </span>
-            </div>
+            </Link>
           ))}
         </Card>
       </div>

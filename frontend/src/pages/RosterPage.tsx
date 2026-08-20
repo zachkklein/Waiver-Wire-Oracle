@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { api } from "../lib/api"
 import type { RosterResponse, Team } from "../lib/types"
 import Card from "../components/Card"
@@ -9,10 +10,15 @@ import { LoadingState, ErrorState } from "../components/EmptyState"
 import { round1 } from "../lib/format"
 
 export default function RosterPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [teams, setTeams] = useState<Team[]>([])
-  const [selected, setSelected] = useState<string | undefined>(undefined)
+  const selected = searchParams.get("team") ?? undefined
   const [roster, setRoster] = useState<RosterResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const setSelected = (team: string | undefined) => {
+    setSearchParams(team ? { team } : {})
+  }
 
   useEffect(() => {
     api

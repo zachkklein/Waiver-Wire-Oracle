@@ -227,6 +227,36 @@ def add_league(values: dict) -> dict:
     return entry
 
 
+def sync_league_name(league_id: str, name: str) -> None:
+    """Persist ESPN's own league name as this league's label, so the switcher shows
+    something more useful than the numeric ID. Called from espn_sync.run() (which
+    fetches the name anyway) so labels self-heal on the next sync, covering leagues
+    that predate the "Connect league" preview flow (legacy migrations, .env-only
+    setups) without requiring a manual re-save in Setup. No-ops if the name is empty
+    or already matches."""
+    if not name:
+        return
+
+    data = dict(_load_settings())
+    leagues = list(data.get("leagues") or [])
+    idx = next((i for i, e in enumerate(leagues) if e.get("ESPN_LEAGUE_ID") == league_id), None)
+
+    if idx is None:
+        implicit = _active_league()  # materialize the implicit env-based league, if it's this one
+        if implicit.get("ESPN_LEAGUE_ID") != league_id:
+            return
+        leagues = [dict(implicit)]
+        idx = 0
+        data.setdefault("active_league_id", league_id)
+
+    if leagues[idx].get("label") == name:
+        return
+
+    leagues[idx] = {**leagues[idx], "label": name}
+    data["leagues"] = leagues
+    _write_settings(data)
+
+
 def set_active_league(league_id: str) -> None:
     data = dict(_load_settings())
     leagues = list(data.get("leagues") or [])
