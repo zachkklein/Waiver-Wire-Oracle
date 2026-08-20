@@ -7,6 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+from context import LeagueCtx  # noqa: F401  (used in a type hint)
 
 NUMERIC_COLUMNS = [
     "completions",
@@ -161,7 +162,9 @@ def query_stats(
         conn.close()
 
 
-def run_tool(tool_input: dict) -> list[dict]:
+def run_tool(tool_input: dict, league: "LeagueCtx | None" = None) -> list[dict]:
+    # `league` is accepted for a uniform tool interface and ignored: this data is
+    # nflverse/RSS, not tied to any one ESPN league.
     return query_stats(**tool_input)
 
 

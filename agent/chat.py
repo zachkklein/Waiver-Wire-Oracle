@@ -7,6 +7,7 @@ from openai import OpenAI
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+from context import LeagueCtx, UserCtx
 from tools import query_roster, query_stats, search_news
 
 SYSTEM_PROMPT = """\
@@ -72,22 +73,26 @@ TOOL_FUNCTIONS = {
 }
 
 
-def execute_tool(name: str, tool_input: dict) -> str:
+def execute_tool(name: str, tool_input: dict, league: LeagueCtx) -> str:
+    """Run one tool call. The league comes from the caller, not the model — a tool can
+    only ever read the league whose context it was handed."""
     func = TOOL_FUNCTIONS.get(name)
     if func is None:
         return f"Error: unknown tool '{name}'"
 
     try:
-        result = func(tool_input)
+        result = func(tool_input, league)
         return json.dumps(result, default=str)
     except Exception as exc:
         return f"Error running {name}: {exc}"
 
 
-def run_turn(client: OpenAI, messages: list[dict]) -> list[dict]:
+def run_turn(
+    client: OpenAI, messages: list[dict], user: UserCtx, league: LeagueCtx
+) -> list[dict]:
     while True:
         response = client.chat.completions.create(
-            model=config.OPENROUTER_MODEL,
+            model=user.openrouter_model,
             messages=messages,
             tools=TOOLS,
         )
@@ -101,7 +106,7 @@ def run_turn(client: OpenAI, messages: list[dict]) -> list[dict]:
         for tool_call in message.tool_calls:
             args = json.loads(tool_call.function.arguments or "{}")
             print(f"  [{tool_call.function.name}({json.dumps(args)})]")
-            result = execute_tool(tool_call.function.name, args)
+            result = execute_tool(tool_call.function.name, args, league)
             messages.append(
                 {
                     "role": "tool",
@@ -112,10 +117,12 @@ def run_turn(client: OpenAI, messages: list[dict]) -> list[dict]:
 
 
 def chat_loop() -> None:
-    if not config.OPENROUTER_API_KEY:
+    user = config.load_user_ctx()
+    league = config.load_league_ctx()
+    if not user.has_key:
         raise RuntimeError("OPENROUTER_API_KEY must be set in .env")
 
-    client = OpenAI(base_url=config.OPENROUTER_BASE_URL, api_key=config.OPENROUTER_API_KEY)
+    client = OpenAI(base_url=config.OPENROUTER_BASE_URL, api_key=user.openrouter_api_key)
     messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     print("Waiver Wire Oracle — ask about your roster, stats, or news. Type 'exit' to quit.\n")
@@ -133,7 +140,7 @@ def chat_loop() -> None:
 
         messages.append({"role": "user", "content": user_input})
         print("Oracle: ", end="", flush=True)
-        messages = run_turn(client, messages)
+        messages = run_turn(client, messages, user, league)
 
 
 if __name__ == "__main__":

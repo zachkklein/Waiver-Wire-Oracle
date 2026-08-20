@@ -13,6 +13,8 @@ import requests
 from fastapi import APIRouter, HTTPException, Response
 
 import config
+from api.deps import LeagueDep
+from context import LeagueCtx
 
 router = APIRouter(prefix="/api", tags=["league"])
 
@@ -71,12 +73,10 @@ def _cached_path(league_id: str, team_id: int, url: str) -> str | None:
     return None
 
 
-def _fetch(url: str) -> tuple[bytes, str]:
+def _fetch(url: str, league: LeagueCtx) -> tuple[bytes, str]:
     # Only ESPN's own API needs the cookies; the CDN doesn't, so don't hand them over.
-    cookies = {}
     host = (urlparse(url).hostname or "").lower()
-    if host.endswith(".espn.com") and config.ESPN_S2 and config.ESPN_SWID:
-        cookies = {"espn_s2": config.ESPN_S2, "SWID": config.ESPN_SWID}
+    cookies = league.espn_cookies if host.endswith(".espn.com") else {}
 
     res = requests.get(url, cookies=cookies, timeout=15)
     res.raise_for_status()
@@ -88,8 +88,8 @@ def _fetch(url: str) -> tuple[bytes, str]:
 
 
 @router.get("/team-logo/{team_id}")
-def get_team_logo(team_id: int):
-    league_id = str(config.ESPN_LEAGUE_ID)
+def get_team_logo(team_id: int, league: LeagueDep):
+    league_id = league.key
     url = _lookup_logo_url(league_id, team_id)
     if not url:
         raise HTTPException(404, "No logo synced for this team.")
@@ -104,7 +104,7 @@ def get_team_logo(team_id: int):
         return Response(body, media_type=media_type, headers={"Cache-Control": CACHE_CONTROL})
 
     try:
-        body, content_type = _fetch(url)
+        body, content_type = _fetch(url, league)
     except HTTPException:
         raise
     except requests.RequestException as exc:

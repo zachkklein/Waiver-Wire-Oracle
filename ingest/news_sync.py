@@ -108,7 +108,7 @@ def sync_news(collection, feed_urls: list[str]) -> int:
 
 
 def run(feed_urls: list[str] | None = None) -> int:
-    feed_urls = feed_urls or config.RSS_FEED_URLS
+    feed_urls = feed_urls or config.rss_feed_urls()
     if not feed_urls:
         raise RuntimeError("RSS_FEED_URLS must be set in .env, or pass feed_urls explicitly")
 

@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 import config
+from api.deps import LeagueDep
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
@@ -43,17 +44,20 @@ def put_settings(payload: SettingsPayload):
 
 
 @router.post("/settings/league-preview")
-def league_preview(req: LeaguePreviewRequest):
+def league_preview(req: LeaguePreviewRequest, current: LeagueDep):
     """Connect to ESPN with the supplied details and list the league's teams, so the
-    user can confirm the league loaded and choose which team is theirs."""
+    user can confirm the league loaded and choose which team is theirs.
+
+    Cookies fall back to the active league's when the form omits them — the UI leaves
+    the secret fields blank unless they're retyped."""
     from espn_api.football import League
 
     try:
         league = League(
             league_id=int(req.ESPN_LEAGUE_ID),
             year=int(req.ESPN_SEASON),
-            espn_s2=req.ESPN_S2 or config.ESPN_S2,
-            swid=req.ESPN_SWID or config.ESPN_SWID,
+            espn_s2=req.ESPN_S2 or current.s2,
+            swid=req.ESPN_SWID or current.swid,
         )
     except ValueError:
         raise HTTPException(400, "League ID and season must be numbers.")

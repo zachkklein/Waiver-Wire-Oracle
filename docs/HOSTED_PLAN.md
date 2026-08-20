@@ -143,6 +143,14 @@ shrinks to "build a ctx from settings.json/env" so the CLI keeps working.
 **Done when:** the single-user app behaves identically and nothing outside the
 ctx loader reads `config.ESPN_*`.
 
+**Status: done.** `context.py` holds the frozen `LeagueCtx` / `UserCtx`; `config.py`
+exposes `load_league_ctx()` / `load_user_ctx()` / `rss_feed_urls()`; `api/deps.py`
+provides `LeagueDep` / `UserDep`, the two functions Phase 3 rewrites. `__getattr__` was
+deleted outright, so a stray `config.ESPN_LEAGUE_ID` now raises `AttributeError` rather
+than silently reading process state. Verified: all endpoints 200, the streaming chat
+tool loop runs, `main.py sync espn` works, and two threads querying different
+`LeagueCtx`s concurrently return different leagues' data.
+
 ### Phase 2 — SQLite → Postgres *(~1–2 days, mostly tedium)*
 
 Add `users`, `user_leagues`, `leagues`; league-scoped tables unchanged. Real

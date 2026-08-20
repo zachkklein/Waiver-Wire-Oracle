@@ -5,6 +5,7 @@ import sqlite3
 from fastapi import APIRouter
 
 import config
+from api.deps import LeagueDep
 
 router = APIRouter(prefix="/api", tags=["meta"])
 
@@ -21,12 +22,12 @@ def _empty(has_data: bool = False) -> dict:
 
 
 @router.get("/meta")
-def get_meta():
+def get_meta(league: LeagueDep):
     # A fresh install has no database until the first sync runs.
     if not os.path.exists(config.DB_PATH):
         return _empty()
 
-    league_id = str(config.ESPN_LEAGUE_ID)
+    league_id = league.key
 
     conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row

@@ -20,7 +20,8 @@ def _migrate_db() -> None:
     # One-time upgrade for databases created before multi-league support: teams/rosters/
     # matchups need a league_id column. Backfilling it needs a league id, and pre-upgrade
     # installs only ever had one — the currently configured (active) one.
-    if not config.ESPN_LEAGUE_ID:
+    league = config.load_league_ctx()
+    if not league.league_id:
         return
     import sqlite3
 
@@ -28,7 +29,7 @@ def _migrate_db() -> None:
 
     conn = sqlite3.connect(config.DB_PATH)
     try:
-        espn_sync.init_db(conn, str(config.ESPN_LEAGUE_ID))
+        espn_sync.init_db(conn, league.key)
         conn.commit()
     finally:
         conn.close()

@@ -8,6 +8,7 @@ from espn_api.football import League
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+from context import LeagueCtx
 
 # league_id is ESPN's own league id (as a string) — it's already globally unique, so it
 # doubles as the key that scopes teams/rosters/matchups to one of possibly several
@@ -61,8 +62,8 @@ CREATE TABLE IF NOT EXISTS matchups (
 """
 
 
-def get_league() -> League:
-    if not config.ESPN_LEAGUE_ID or not config.ESPN_SEASON:
+def get_league(ctx: LeagueCtx) -> League:
+    if not ctx.is_configured:
         raise RuntimeError(
             "League ID and season are required — set them in the app's Setup page, or "
             "ESPN_LEAGUE_ID/ESPN_SEASON in .env"
@@ -70,10 +71,10 @@ def get_league() -> League:
 
     # espn_s2/swid are only needed for private leagues; public ones load fine as None.
     return League(
-        league_id=int(config.ESPN_LEAGUE_ID),
-        year=int(config.ESPN_SEASON),
-        espn_s2=config.ESPN_S2,
-        swid=config.ESPN_SWID,
+        league_id=int(ctx.league_id),
+        year=int(ctx.season),
+        espn_s2=ctx.s2,
+        swid=ctx.swid,
     )
 
 
@@ -126,10 +127,10 @@ def init_db(conn: sqlite3.Connection, league_id: str) -> None:
     _migrate_added_columns(conn)
 
 
-def find_self_team_id(league: League) -> int | None:
+def find_self_team_id(league: League, ctx: LeagueCtx) -> int | None:
     """Identify the user's own team. An explicitly configured team wins — public
     leagues have no cookies to match against, so ESPN_TEAM_ID is the only signal."""
-    explicit = config.ESPN_TEAM_ID
+    explicit = ctx.team_id
     if explicit:
         try:
             team_id = int(explicit)
@@ -138,7 +139,7 @@ def find_self_team_id(league: League) -> int | None:
         if team_id is not None and any(t.team_id == team_id for t in league.teams):
             return team_id
 
-    swid = (config.ESPN_SWID or "").strip().strip("{}").lower()
+    swid = (ctx.swid or "").strip().strip("{}").lower()
     if not swid:
         return None
 
@@ -270,10 +271,11 @@ def sync_matchups(
     )
 
 
-def run() -> None:
-    league = get_league()
-    league_id = str(config.ESPN_LEAGUE_ID)
-    self_team_id = find_self_team_id(league)
+def run(ctx: LeagueCtx | None = None) -> None:
+    ctx = ctx or config.load_league_ctx()
+    league = get_league(ctx)
+    league_id = ctx.key
+    self_team_id = find_self_team_id(league, ctx)
 
     config.sync_league_name(league_id, getattr(league.settings, "name", None))
 

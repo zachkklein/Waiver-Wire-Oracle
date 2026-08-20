@@ -7,6 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+from context import LeagueCtx
 
 TOOL_SCHEMA = {
     "name": "query_roster",
@@ -176,13 +177,16 @@ def _get_matchup(
 
 
 def query_roster(
+    league: LeagueCtx,
     view: str = "roster",
     team: str | None = None,
     week: int | None = None,
     include_logos: bool = False,
 ) -> dict:
+    """Every teams/rosters/matchups query is scoped to `league` — team_id values are
+    only unique within a league, not across leagues sharing this database."""
     view = (view or "roster").lower()
-    league_id = str(config.ESPN_LEAGUE_ID)
+    league_id = league.key
 
     conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -198,8 +202,12 @@ def query_roster(
         conn.close()
 
 
-def run_tool(tool_input: dict) -> dict:
-    return query_roster(**tool_input)
+def run_tool(tool_input: dict, league: LeagueCtx | None = None) -> dict:
+    """LLM entrypoint. `league` is supplied by the caller, never by the model — it's
+    not in TOOL_SCHEMA, so the agent can't ask for a league it shouldn't see."""
+    if league is None:
+        raise ValueError("query_roster needs a LeagueCtx")
+    return query_roster(league, **tool_input)
 
 
 if __name__ == "__main__":
@@ -209,5 +217,5 @@ if __name__ == "__main__":
     parser.add_argument("--week", type=int)
     args = parser.parse_args()
 
-    result = query_roster(view=args.view, team=args.team, week=args.week)
+    result = query_roster(config.load_league_ctx(), view=args.view, team=args.team, week=args.week)
     print(json.dumps(result, indent=2))

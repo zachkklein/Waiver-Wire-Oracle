@@ -121,11 +121,14 @@ def sync_player_stats(conn: sqlite3.Connection, years: list[int]) -> int:
     return len(rows)
 
 
-def run(years: list[int] | None = None) -> int:
+def run(years: list[int] | None = None, default_season: str | int | None = None) -> int:
+    """Player stats are nflverse data, shared by every league — the only league-shaped
+    input is which season to default to when no years are given."""
     if not years:
-        if not config.ESPN_SEASON:
+        default_season = default_season or config.load_league_ctx().season
+        if not default_season:
             raise RuntimeError("ESPN_SEASON must be set in .env, or pass years explicitly")
-        years = [int(config.ESPN_SEASON)]
+        years = [int(default_season)]
 
     conn = sqlite3.connect(config.DB_PATH)
     try:

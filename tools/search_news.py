@@ -6,6 +6,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from context import LeagueCtx  # noqa: F401  (used in a type hint)
 from ingest.news_sync import get_collection
 
 TOOL_SCHEMA = {
@@ -90,7 +91,9 @@ def search_news(
     return hits
 
 
-def run_tool(tool_input: dict) -> list[dict]:
+def run_tool(tool_input: dict, league: "LeagueCtx | None" = None) -> list[dict]:
+    # `league` is accepted for a uniform tool interface and ignored: this data is
+    # nflverse/RSS, not tied to any one ESPN league.
     return search_news(**tool_input)
 
 

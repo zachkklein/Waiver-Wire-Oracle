@@ -8,22 +8,30 @@ Values come from three places, in priority order:
 3. built-in defaults
 
 Paths and the OpenRouter base URL are plain module constants. Everything a user can
-change is resolved lazily through ``__getattr__`` so a save from the setup screen takes
-effect immediately, without restarting the server — callers still just read
-``config.ESPN_LEAGUE_ID`` as before.
+change is read fresh from disk on each access, so a save from the setup screen takes
+effect immediately, without restarting the server.
 
 Multiple ESPN leagues can be configured (``data/settings.json``'s ``leagues`` list); one
-is "active" at a time (``active_league_id``), and every ``ESPN_*`` attribute below always
-resolves to that active league's values. Switching the active league (``set_active_league``)
-is what makes ``config.ESPN_LEAGUE_ID`` — and therefore every ingest script and query tool
-that reads it — point at a different league without a restart. ``OPENROUTER_*`` and
-``RSS_FEED_URLS`` are global, shared across all leagues.
+is "active" at a time (``active_league_id``). ``load_league_ctx()`` builds a
+:class:`~context.LeagueCtx` for that active league, and ``load_user_ctx()`` a
+:class:`~context.UserCtx` from the global OpenRouter settings.
+
+**These two loaders are the only supported way to read a league or an API key.** There
+is deliberately no ``config.ESPN_LEAGUE_ID`` attribute any more: "the active league" is
+a property of this process, and that stops being meaningful the moment two people use a
+hosted build at once. Callers take a context object as an argument instead. See
+``context.py`` and ``docs/HOSTED_PLAN.md``.
+
+``RSS_FEED_URLS`` stays a module-level read (``rss_feed_urls()``): news is global
+infrastructure config, not per-user.
 """
 
 import json
 import os
 
 from dotenv import load_dotenv
+
+from context import DEFAULT_OPENROUTER_MODEL, LeagueCtx, UserCtx
 
 load_dotenv()
 
@@ -34,7 +42,6 @@ CHROMA_PATH = os.path.join(DATA_DIR, "chroma")
 SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_OPENROUTER_MODEL = "qwen/qwen3.7-flash"
 
 # Sensible starting feeds so a fresh install has news to search without hunting for URLs.
 DEFAULT_RSS_FEED_URLS = [
@@ -305,7 +312,7 @@ def list_leagues() -> list:
 
 def is_configured() -> bool:
     """True once there's enough to sync a league (a public league needs no cookies)."""
-    return bool(_resolve("ESPN_LEAGUE_ID") and _resolve("ESPN_SEASON"))
+    return load_league_ctx().is_configured
 
 
 def settings_summary() -> dict:
@@ -325,6 +332,11 @@ def settings_summary() -> dict:
 
 
 def _resolve(name: str):
+    """One setting, in priority order: settings.json, then env, then a default.
+
+    Internal — outside callers go through load_league_ctx()/load_user_ctx() so that a
+    league is always something they were handed, never something they looked up.
+    """
     if name == "RSS_FEED_URLS":
         stored = _load_settings().get("RSS_FEED_URLS")
         if isinstance(stored, list) and any(str(u).strip() for u in stored):
@@ -347,8 +359,31 @@ def _resolve(name: str):
     return DEFAULT_OPENROUTER_MODEL if name == "OPENROUTER_MODEL" else None
 
 
-def __getattr__(name: str):
-    """Resolve user-settable keys on access (PEP 562) so saves apply without a restart."""
-    if name in SETTING_KEYS:
-        return _resolve(name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+def load_league_ctx() -> LeagueCtx:
+    """The active league, as a context to pass down into tools and ingests.
+
+    This is the seam the hosted build replaces: there, the request's league comes from
+    the signed-in user's `user_leagues` row rather than from local settings, and
+    everything downstream keeps working unchanged because it only ever sees a LeagueCtx.
+    """
+    return LeagueCtx(
+        league_id=_resolve("ESPN_LEAGUE_ID"),
+        season=_resolve("ESPN_SEASON"),
+        swid=_resolve("ESPN_SWID"),
+        s2=_resolve("ESPN_S2"),
+        team_id=_resolve("ESPN_TEAM_ID"),
+        label=_active_league().get("label"),
+    )
+
+
+def load_user_ctx() -> UserCtx:
+    """Whose OpenRouter key the agent runs on — globally configured, for now."""
+    return UserCtx(
+        openrouter_api_key=_resolve("OPENROUTER_API_KEY"),
+        openrouter_model=_resolve("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL,
+    )
+
+
+def rss_feed_urls() -> list:
+    """News feeds — global infrastructure config, not per-league or per-user."""
+    return _resolve("RSS_FEED_URLS")

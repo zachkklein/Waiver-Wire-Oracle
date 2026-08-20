@@ -8,26 +8,30 @@ from openai import OpenAI
 
 import config
 from agent.chat import SYSTEM_PROMPT, TOOLS, execute_tool
+from context import LeagueCtx, UserCtx
 
 
-def _new_client() -> OpenAI:
-    return OpenAI(base_url=config.OPENROUTER_BASE_URL, api_key=config.OPENROUTER_API_KEY)
+def _new_client(user: UserCtx) -> OpenAI:
+    return OpenAI(base_url=config.OPENROUTER_BASE_URL, api_key=user.openrouter_api_key)
 
 
-def stream_chat(history: list[dict]) -> Iterator[dict]:
+def stream_chat(history: list[dict], user: UserCtx, league: LeagueCtx) -> Iterator[dict]:
     """Runs the tool-calling loop against OpenRouter, yielding event dicts as it goes:
-    tool_call, tool_result, token, done, error."""
-    if not config.OPENROUTER_API_KEY:
+    tool_call, tool_result, token, done, error.
+
+    `user` supplies the key and model, `league` scopes every query_roster call — both
+    come from the request, so two concurrent chats can run as different users."""
+    if not user.has_key:
         yield {"type": "error", "message": "OPENROUTER_API_KEY must be set in .env"}
         return
 
-    client = _new_client()
+    client = _new_client(user)
     messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}, *history]
 
     try:
         while True:
             stream = client.chat.completions.create(
-                model=config.OPENROUTER_MODEL,
+                model=user.openrouter_model,
                 messages=messages,
                 tools=TOOLS,
                 stream=True,
@@ -83,7 +87,7 @@ def stream_chat(history: list[dict]) -> Iterator[dict]:
             for call in tool_calls:
                 args = json.loads(call["arguments"] or "{}")
                 yield {"type": "tool_call", "name": call["name"], "args": args}
-                result = execute_tool(call["name"], args)
+                result = execute_tool(call["name"], args, league)
                 messages.append(
                     {"role": "tool", "tool_call_id": call["id"], "content": result}
                 )
