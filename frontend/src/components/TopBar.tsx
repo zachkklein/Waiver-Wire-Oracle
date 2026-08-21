@@ -1,10 +1,13 @@
 import type { Meta } from "../lib/types"
 import { teamLogoUrl } from "../lib/api"
 import { timeAgo } from "../lib/format"
+import { useAuth } from "../auth/AuthProvider"
 import LeagueSwitcher from "./LeagueSwitcher"
 import TeamBadge from "./TeamBadge"
 
 export default function TopBar({ meta }: { meta: Meta | null }) {
+  const { accountsEnabled, email, signOut } = useAuth()
+
   return (
     <header className="flex h-[72px] shrink-0 items-center justify-between gap-4 border-b border-border bg-surface px-4 md:px-8">
       <LeagueSwitcher />
@@ -33,6 +36,17 @@ export default function TopBar({ meta }: { meta: Meta | null }) {
               </div>
             </div>
           </div>
+        )}
+
+        {/* Only a deployment with accounts has anything to sign out of. */}
+        {accountsEnabled && (
+          <button
+            onClick={signOut}
+            title={email ?? undefined}
+            className="rounded-full bg-surface-raised px-4 py-2 text-xs font-semibold text-text-muted transition-colors hover:bg-border/60 hover:text-text"
+          >
+            Sign out
+          </button>
         )}
       </div>
     </header>

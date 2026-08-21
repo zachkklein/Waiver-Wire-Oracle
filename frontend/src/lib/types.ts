@@ -155,6 +155,16 @@ export interface NewLeaguePayload {
   ESPN_TEAM_ID?: string
 }
 
+/** Served unauthenticated by GET /api/auth/config. `enabled: false` is the
+ * self-hosted install: no sign-in screen, no tokens on requests. `publishable_key` is
+ * Supabase's publishable key (`sb_publishable_...`), which is meant to ship in the
+ * browser — it is never a secret or service-role key. */
+export interface AuthConfig {
+  enabled: boolean
+  url: string | null
+  publishable_key: string | null
+}
+
 export type SyncTarget = "espn" | "stats" | "news"
 
 export interface SyncStatus {

@@ -2,29 +2,29 @@
 
 from fastapi import APIRouter
 
-import config
 import db
 from api.deps import LeagueDep
 
 router = APIRouter(prefix="/api", tags=["meta"])
 
 
-def _empty(has_data: bool = False) -> dict:
+def _empty(configured: bool, has_data: bool = False) -> dict:
     return {
         "self_team": None,
         "current_week": None,
         "synced_at": None,
         "player_stats_rows": 0,
-        "configured": config.is_configured(),
+        "configured": configured,
         "has_data": has_data,
     }
 
 
 @router.get("/meta")
 def get_meta(league: LeagueDep):
-    # A fresh install has no tables until the first sync runs.
-    if not db.is_initialized():
-        return _empty()
+    # A fresh install has no tables until the first sync runs; a brand-new account has
+    # no league yet, and `league.key` would be the string "None" — don't query with it.
+    if not league.is_configured or not db.is_initialized():
+        return _empty(league.is_configured)
 
     league_id = league.key
 
@@ -33,7 +33,7 @@ def get_meta(league: LeagueDep):
         tables = db.table_names(conn)
         if "teams" not in tables:
             # Possible when only stats or news have been synced so far.
-            return _empty()
+            return _empty(league.is_configured)
 
         # Which team is "yours" comes from the request's league context, not from a
         # column: teams rows are shared by everyone in the league.
@@ -92,7 +92,7 @@ def get_meta(league: LeagueDep):
             "current_week": summary["current_week"],
             "synced_at": synced_at,
             "player_stats_rows": stats_row_count,
-            "configured": config.is_configured(),
+            "configured": league.is_configured,
             "has_data": summary["team_count"] > 0,
         }
     finally:

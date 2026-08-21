@@ -1,15 +1,14 @@
 # CLI entrypoint.
 import argparse
 
-import config
 from agent import chat
 from ingest import espn_sync, news_sync, stats_sync
 
 
 def _sync_espn(args: argparse.Namespace) -> None:
-    # The CLI is single-user by definition, so the league comes from local settings.
-    # The hosted worker calls espn_sync.run(ctx) with a league from the database instead.
-    league, self_team_id = espn_sync.run(config.load_league_ctx())
+    # The CLI is single-user by definition, so run() resolves the league from local
+    # settings. The hosted path passes an explicit ctx and principal instead.
+    league, self_team_id = espn_sync.run()
     total_players = sum(len(t.roster) for t in league.teams)
     print(f"Synced {len(league.teams)} teams, {total_players} rostered players, "
           f"matchups for week {league.current_week}.")

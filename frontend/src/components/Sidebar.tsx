@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom"
+import { useAuth } from "../auth/AuthProvider"
 
 const LINKS = [
   { to: "/", label: "Dashboard", end: true },
@@ -12,6 +13,8 @@ const LINKS = [
 ]
 
 export default function Sidebar() {
+  const { accountsEnabled, email } = useAuth()
+
   return (
     <aside className="flex w-full shrink-0 flex-col border-b border-border bg-surface md:w-64 md:border-b-0 md:border-r">
       <div className="flex items-center gap-3 px-5 py-5 md:px-6 md:py-7">
@@ -47,7 +50,11 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      <div className="hidden px-6 py-5 text-xs text-text-faint md:block">Runs locally</div>
+      {/* "Runs locally" is only true of a self-hosted install; with accounts, the more
+          useful thing to put here is which one you're signed in as. */}
+      <div className="hidden truncate px-6 py-5 text-xs text-text-faint md:block">
+        {accountsEnabled ? (email ?? "Signed in") : "Runs locally"}
+      </div>
     </aside>
   )
 }

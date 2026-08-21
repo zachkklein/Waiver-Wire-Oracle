@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
+import { useAuth } from "../auth/AuthProvider"
 import { api } from "../lib/api"
 import type { LeaguePreview, Settings, SyncStatus, SyncTarget } from "../lib/types"
 import PageHeader from "../components/PageHeader"
@@ -27,6 +28,10 @@ const inputClass =
 export default function SetupPage() {
   const [searchParams] = useSearchParams()
   const isNew = searchParams.get("new") === "1"
+  // With accounts, some of this page isn't the user's to edit: news feeds are the
+  // server's infrastructure config, and the shared nflverse/news ingests are the
+  // operator's job rather than something each signed-in user re-runs.
+  const { accountsEnabled } = useAuth()
 
   const [settings, setSettings] = useState<Settings | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -88,6 +93,10 @@ export default function SetupPage() {
   if (loadError) return <ErrorState message={loadError} />
   if (!settings) return <LoadingState />
 
+  // The shared ingests aren't per-user work, and POST /api/sync refuses them once
+  // accounts are on — so don't offer buttons that would only ever 403.
+  const syncTargets: SyncTarget[] = accountsEnabled ? ["espn"] : ["espn", "stats", "news"]
+
   const connect = async () => {
     setConnecting(true)
     setConnectError(null)
@@ -134,10 +143,16 @@ export default function SetupPage() {
         ESPN_SEASON: season.trim(),
         ESPN_TEAM_ID: teamId,
         OPENROUTER_MODEL: model.trim() || undefined,
-        RSS_FEED_URLS: feeds
-          .split("\n")
-          .map((f) => f.trim())
-          .filter(Boolean),
+        // Feeds are only editable on a self-hosted install; don't send back a field the
+        // hosted UI never showed.
+        ...(accountsEnabled
+          ? {}
+          : {
+              RSS_FEED_URLS: feeds
+                .split("\n")
+                .map((f) => f.trim())
+                .filter(Boolean),
+            }),
         ...(preview?.league_name ? { label: preview.league_name } : {}),
         // Secrets are only sent when newly typed, so blanks don't wipe stored values.
         ...(isPrivate && swid.trim() ? { ESPN_SWID: swid.trim() } : {}),
@@ -168,11 +183,13 @@ export default function SetupPage() {
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
-        title={isNew ? "Add another league" : "Setup"}
+        title={isNew ? (settings.configured ? "Add another league" : "Connect your league") : "Setup"}
         eyebrow={
           isNew
-            ? "Connect another ESPN league. Your OpenRouter key and news feeds are shared across leagues — manage those from the main Setup page."
-            : "Connect your ESPN league and pull in data. Everything is stored locally in data/settings.json."
+            ? "Connect another ESPN league. Your OpenRouter key is shared across your leagues — manage it from the main Setup page."
+            : accountsEnabled
+              ? "Connect your ESPN league and pull in data. Your league is yours alone; the league's rosters and scores are shared with everyone else in it."
+              : "Connect your ESPN league and pull in data. Everything is stored locally in data/settings.json."
         }
       />
 
@@ -224,8 +241,10 @@ export default function SetupPage() {
                   In a browser signed in to fantasy.espn.com, open DevTools →{" "}
                   <span className="text-text">Application</span> →{" "}
                   <span className="text-text">Cookies</span> → <code>fantasy.espn.com</code>, then
-                  copy the <code>SWID</code> and <code>espn_s2</code> values. They stay on this
-                  machine and are never sent anywhere but ESPN.
+                  copy the <code>SWID</code> and <code>espn_s2</code> values.{" "}
+                  {accountsEnabled
+                    ? "They're stored with your account and are never sent anywhere but ESPN."
+                    : "They stay on this machine and are never sent anywhere but ESPN."}
                 </p>
                 <div>
                   <Label
@@ -346,7 +365,7 @@ export default function SetupPage() {
           </Card>
         )}
 
-        {!isNew && (
+        {!isNew && !accountsEnabled && (
           <Card title="News feeds">
             <Label hint="One RSS URL per line. These are searched on the News page and by the Oracle.">
               Feeds
@@ -376,8 +395,9 @@ export default function SetupPage() {
         {!isNew && (
           <Card title="Pull in data">
             <p className="mb-4 text-sm leading-relaxed text-text-muted">
-              Save your settings first, then sync. The league takes a few seconds; player stats and
-              news take longer on the first run.
+              {accountsEnabled
+                ? "Save your settings first, then pull this league's teams, rosters and scores from ESPN. Player stats and news are shared across every league and stay up to date on their own."
+                : "Save your settings first, then sync. The league takes a few seconds; player stats and news take longer on the first run."}
             </p>
             <div className="flex flex-wrap gap-2.5">
               <button
@@ -385,9 +405,10 @@ export default function SetupPage() {
                 disabled={sync?.running || !settings.configured}
                 className="pressable rounded-full bg-accent px-6 py-2.5 text-sm font-bold text-bg hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
               >
-                {sync?.running ? "Syncing" : "Sync everything"}
+                {sync?.running ? "Syncing" : accountsEnabled ? "Sync league" : "Sync everything"}
               </button>
-              {(["espn", "stats", "news"] as SyncTarget[]).map((t) => (
+              {syncTargets.length > 1 &&
+                syncTargets.map((t) => (
                 <button
                   key={t}
                   onClick={() => runSync([t])}
@@ -396,12 +417,12 @@ export default function SetupPage() {
                 >
                   {SYNC_LABELS[t]}
                 </button>
-              ))}
+                ))}
             </div>
 
             {sync && (
               <div className="mt-5 flex flex-col gap-2">
-                {(["espn", "stats", "news"] as SyncTarget[]).map((t) => {
+                {syncTargets.map((t) => {
                   const result = sync.results[t]
                   if (!result && !sync.running) return null
                   return (

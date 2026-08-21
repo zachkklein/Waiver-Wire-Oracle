@@ -247,6 +247,81 @@ list teams, pick yours). It just writes to `user_leagues` instead of
 **Done when:** two browsers signed in as different accounts see different leagues
 at the same time.
 
+**Status: done.** Sign-in is Supabase Auth magic links. `auth.py` verifies the JWT
+against the project's **JWT Signing Keys** (asymmetric ES256/RS256, via its public JWKS
+endpoint) and yields a `Principal`; `store.py` turns that into the
+`LeagueCtx`/`UserCtx` everything downstream already took. Nothing in `tools/`, `api/`'s
+data routers, or the ingests changed shape — Phase 1 had already made the seam.
+
+**Self-hosting survives, and that decided the shape.** Auth is opt-in: without
+`SUPABASE_URL`/`SUPABASE_PUBLISHABLE_KEY` every request runs as `auth.LOCAL_PRINCIPAL`, there is
+no sign-in screen, and leagues come from `data/settings.json` exactly as before.
+`store.py` is the single place that branches on which mode it's in; `api/deps.py` is the
+single place that decides who the caller is. One frontend build covers both, because
+`GET /api/auth/config` (unauthenticated) tells the browser whether accounts exist —
+build-time env vars would have forced two builds.
+
+Notable decisions:
+- **`public.users.id` is now a real FK to `auth.users`**, so deleting an account in
+  Supabase Auth cascades away its `user_leagues` rows — and with them the stored
+  `espn_s2`, which is the credential worth designing the deletion path around. Rows are
+  provisioned just in time on first authenticated request rather than by a trigger.
+- **`leagues.name` is ESPN's name, `user_leagues.label` is one person's rename.**
+  Conflating them meant whoever added a league first renamed it for all twelve members;
+  only a sync writes the shared column now.
+- **Sync state is keyed by league, not process-global**, and `stats`/`news` — global data
+  shared by every league — are refused (403) once accounts are on, since one user
+  re-ingesting nflverse is not "their" sync. Phase 5 replaces the whole thing.
+- **Team logos take their token from a query string**, the one place that happens: the
+  browser reaches that endpoint through `<img src>`, which can't set a header.
+- **Supabase's current key system only.** The publishable key (`sb_publishable_...`) is
+  the only Supabase key the app holds; the legacy `anon` key and `SUPABASE_JWT_SECRET`
+  are both rejected at startup rather than quietly working. No secret/service-role key
+  exists anywhere — the backend is a database owner over `DATABASE_URL`, not a PostgREST
+  client, so it has nothing to authenticate to.
+
+Verified against the live Supabase project with two real accounts: JWT verification
+accepts valid tokens and rejects tampered/garbage ones; both accounts signed in at once
+in two browser tabs saw the same league's shared `teams`/`rosters` rows with their own
+team highlighted, their own league labels, their own OpenRouter key and model; neither
+could read the other's ESPN cookies; the streaming Oracle loop ran per account; and
+deleting the auth users cascaded every linked row away. The self-hosted path (no
+`SUPABASE_*`) still 200s on every endpoint with no token, and `main.py sync espn` still
+works.
+
+**Open security finding — the tenancy boundary is not actually enforced yet.** A security
+review of this phase found that `store._db_add_league()` will link an account to *any*
+ESPN league id it is handed, without ever asking ESPN whether the caller can reach that
+league: `ESPN_SWID`/`ESPN_S2` are optional on `POST /api/leagues`, and no ESPN call is
+made. Since `teams`/`rosters`/`matchups` are shared across tenants and every read path
+scopes only by `league.key` — which comes from the caller's own `user_leagues` row — that
+row *is* the whole authorization decision. So any signed-up account can post a league id
+and read that league's rosters, standings and matchups, and ask the Oracle about them.
+`PUT /api/settings` has the same hole via the league-switch branch of
+`_db_save_settings()`, and `_upsert_league()` lets the same unvalidated caller overwrite
+the shared `leagues.season`.
+
+An earlier draft of this section claimed the two-account test showed neither user could
+"activate a league they weren't in". That is true of `PUT /api/leagues/{id}/activate`,
+which does check for an existing link — and false of the system, because the *add* path
+was never gated. The test exercised the wrong endpoint.
+
+Fix before this is exposed to anyone but its author: make `_db_add_league` and the
+league-switch branch of `_db_save_settings` run the same `espn_api.football.League(...)`
+call `POST /api/settings/league-preview` already makes, with the credentials submitted in
+*that* request, and reject unless the league loads — plus, for a private league, unless
+`find_self_team_id()` resolves. That also makes `user_leagues.credentials_valid_at` mean
+what its name says; it is currently stamped `now()` for credentials that were never
+checked. Public leagues remain reachable by anyone, which is acceptable: they're public
+on ESPN too.
+
+Also left for later: a `?new=1` deep link and `/roster` are still 404 on hard reload —
+`StaticFiles(html=True)` has no SPA fallback, which is Phase 6's line item. And two
+smaller review notes: `/api/stats` and `/api/news` take no principal (global data, but
+the "every endpoint is authenticated" invariant should hold by construction), and
+`logos._fetch()` follows redirects with a domain-less cookie dict, so an ESPN open
+redirect could carry `espn_s2` off-host — `allow_redirects=False` closes it.
+
 ### Phase 4 — Encrypt secrets at rest *(~half a day)*
 
 AES-GCM or Fernet with a key from the environment, covering `espn_s2` / `swid`

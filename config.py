@@ -422,3 +422,19 @@ def load_user_ctx() -> UserCtx:
 def rss_feed_urls() -> list:
     """News feeds — global infrastructure config, not per-league or per-user."""
     return _resolve("RSS_FEED_URLS")
+
+
+def shared_openrouter_key() -> str | None:
+    """The *deployment's* own OpenRouter key, from the environment only.
+
+    In the hosted build this is what a signed-in user gets before they bring their own
+    (``docs/HOSTED_PLAN.md``: our key with a metered free tier). Deliberately not read
+    from ``settings.json`` — that file belongs to a self-hosted install, and a hosted
+    server has no business handing one user's saved key to another.
+    """
+    return os.getenv("OPENROUTER_API_KEY") or None
+
+
+def default_openrouter_model() -> str:
+    """The model to use when nobody has chosen one."""
+    return os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL

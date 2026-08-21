@@ -9,21 +9,44 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+import auth
 import config
+import db
+from api.routers import auth as auth_router
 from api.routers import chat, league, leagues, logos, meta, news, settings, stats
 
 app = FastAPI(title="Waiver Wire Oracle")
 
 
 @app.on_event("startup")
+def _check_config() -> None:
+    # Reject a legacy Supabase key here rather than letting it quietly work.
+    auth.check_config()
+
+    # Accounts live in Postgres tables created by supabase/migrations. Sitting on the
+    # local SQLite file with auth switched on would fail later, per request, with a
+    # missing-table error — say so once, at startup, instead.
+    if auth.is_enabled() and not db.is_postgres():
+        raise RuntimeError(
+            "SUPABASE_URL is set, so this deployment has accounts — but DATABASE_URL "
+            "isn't, so it would be storing them in the local data/db.sqlite file. Point "
+            "DATABASE_URL at Postgres, or unset SUPABASE_URL to run single-user."
+        )
+
+
+@app.on_event("startup")
 def _migrate_db() -> None:
     # One-time upgrade for databases created before multi-league support: teams/rosters/
     # matchups need a league_id column. Backfilling it needs a league id, and pre-upgrade
-    # installs only ever had one — the currently configured (active) one.
+    # installs only ever had one — the currently configured one. That only ever applies
+    # to a self-hosted SQLite file; a hosted database has no ambient league to name, and
+    # was created from the current schema anyway.
+    if auth.is_enabled():
+        return
+
     league = config.load_league_ctx()
     if not league.league_id:
         return
-    import db
     from ingest import espn_sync
 
     with db.session(commit=True) as conn:
@@ -37,6 +60,7 @@ app.add_middleware(
 )
 
 for router in (
+    auth_router.router,
     league.router,
     leagues.router,
     logos.router,

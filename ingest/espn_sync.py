@@ -6,8 +6,9 @@ from datetime import datetime, timezone
 from espn_api.football import League
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import config
 import db
+import store
+from auth import LOCAL_PRINCIPAL, Principal
 from context import LeagueCtx
 from names import normalize_player_name
 
@@ -365,31 +366,40 @@ def record_league_sync(conn, league_id: str, ctx: LeagueCtx) -> None:
 
     This is where sync time lives now that rosters has no per-row updated_at, and it's
     what Phase 5's "refresh only if stale" check will read.
+
+    It writes no `name`: that's ESPN's own name for the league, owned by
+    store.record_league_name() above, and ctx.label may be one user's private rename.
     """
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """
-        INSERT INTO leagues (league_id, season, name, last_synced_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO leagues (league_id, season, last_synced_at)
+        VALUES (?, ?, ?)
         ON CONFLICT(league_id) DO UPDATE SET
             season = COALESCE(excluded.season, leagues.season),
-            name = COALESCE(excluded.name, leagues.name),
             last_synced_at = excluded.last_synced_at
         """,
-        (league_id, ctx.season, ctx.label, now),
+        (league_id, ctx.season, now),
     )
 
 
-def run(ctx: LeagueCtx | None = None) -> None:
-    ctx = ctx or config.load_league_ctx()
+def run(ctx: LeagueCtx | None = None, principal: Principal | None = None) -> None:
+    """Sync one league. `ctx` says which one; `principal` says on whose behalf.
+
+    The two are separate because the league data is shared and the resolved self-team is
+    not: everyone in a league writes the same teams/rosters/matchups rows, but which team
+    is *yours* belongs to your own account (or, self-hosted, to settings.json)."""
+    principal = principal or LOCAL_PRINCIPAL
+    ctx = ctx or store.load_league_ctx(principal)
     league = get_league(ctx)
     league_id = ctx.key
     self_team_id = find_self_team_id(league, ctx)
 
-    config.sync_league_name(league_id, getattr(league.settings, "name", None))
+    store.record_league_name(principal, league_id, getattr(league.settings, "name", None))
     # Persist whichever team we resolved as the user's, so queries can derive is_self
-    # without re-running SWID matching. In the hosted build this is user_leagues.espn_team_id.
-    config.sync_self_team_id(league_id, self_team_id)
+    # without re-running SWID matching. For an account that's user_leagues.espn_team_id,
+    # which is per-user by construction.
+    store.record_self_team_id(principal, league_id, self_team_id)
 
     conn = db.connect()
     try:

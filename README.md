@@ -165,9 +165,11 @@ Oracle:   [query_stats({"player_name": "Kenny Gainwell", ...})]
 ```
 waiver-wire-oracle/
 ├── .env                  # optional config for headless setups (gitignored)
-├── config.py              # resolves settings: settings.json -> .env -> defaults
-├── config.py              # (above) also builds the per-request LeagueCtx/UserCtx
+├── config.py              # resolves settings: settings.json -> .env -> defaults,
+│                          #   and builds the per-request LeagueCtx/UserCtx
 ├── context.py             # LeagueCtx / UserCtx — passed explicitly, never module globals
+├── auth.py                # who is asking: Supabase JWT, or the single local user
+├── store.py               # where their leagues live: settings.json, or user_leagues
 ├── db.py                  # SQLite or Postgres, chosen by DATABASE_URL
 ├── names.py               # player-name normalisation (ESPN ↔ nflverse linking)
 ├── data/                  # all gitignored
@@ -175,7 +177,7 @@ waiver-wire-oracle/
 │   ├── db.sqlite           # leagues/teams/rosters/matchups (keyed by league_id), players, player_stats
 │   ├── logos/               # cached ESPN team logos
 │   └── chroma/              # embedded news vector store
-├── supabase/migrations/   # Postgres schema, for the hosted deployment
+├── supabase/migrations/   # Postgres schema + accounts, for the hosted deployment
 ├── ingest/
 │   ├── espn_sync.py         # ESPN league → database
 │   ├── stats_sync.py        # nflverse stats → database (+ links players to ESPN ids)
@@ -189,11 +191,13 @@ waiver-wire-oracle/
 ├── api/
 │   ├── main.py                # FastAPI app (mounts routers + serves frontend/dist in prod)
 │   ├── chat_service.py         # streaming version of agent/chat.py's tool loop
-│   └── routers/                # league, leagues, stats, news, meta, chat, settings
+│   ├── deps.py                 # the one seam: request → Principal → LeagueCtx/UserCtx
+│   └── routers/                # auth, league, leagues, stats, news, meta, chat, settings
 ├── frontend/
 │   ├── src/pages/               # Dashboard, Roster, Matchups, Standings, Players, News, Chat, Setup
 │   ├── src/components/          # shared UI (badges, cards, chat bubbles, markdown rendering)
-│   └── src/lib/                 # api.ts (fetch wrappers), types.ts
+│   ├── src/auth/                # sign-in screen and gate (only when accounts are on)
+│   └── src/lib/                 # api.ts (fetch wrappers), auth.ts, types.ts
 ├── scripts/
 │   └── migrate_to_postgres.py  # copy an existing SQLite database into Postgres
 └── main.py                   # CLI entrypoint (sync, chat, serve subcommands)
@@ -205,8 +209,10 @@ Each `tools/*.py` file also works as a standalone CLI for testing — run any of
 
 This is an active personal project, built to be cloned and self-hosted. Currently implemented: ESPN/stats/news ingestion, SQL and vector-search query tools, a terminal chat agent, a unified `main.py` CLI, a local web app (FastAPI + React) covering the dashboard, roster, matchups, standings, players, news, and a streaming chat page, an in-app Setup page so a fresh clone can be configured entirely from the browser, and support for multiple ESPN leagues (add/switch/remove from a top-bar dropdown) against the same install.
 
-Also runs on Postgres (`DATABASE_URL`), with the schema in `supabase/migrations/` — groundwork for a hosted multi-user version, tracked in `docs/HOSTED_PLAN.md`.
+Also runs on Postgres (`DATABASE_URL`), with the schema in `supabase/migrations/`, and now with **optional accounts**: set `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` and the app grows a magic-link sign-in screen, with each account's leagues, ESPN cookies and OpenRouter key stored per user. Progress toward a fully hosted version is tracked in `docs/HOSTED_PLAN.md`.
 
-Not built, by design: there's **no authentication and no multi-user support** — it assumes one person running one copy, and anyone who can reach the URL gets full access to every league you've added and can spend your OpenRouter credits. Multiple *leagues* are supported, but not multiple *users*: only one league is "active" (queried/chatted-about) at a time, and there's no per-visitor session, so everyone hitting the URL sees and switches the same active league. Don't expose it to the open internet without putting something in front of it (a private network like Tailscale, or an identity proxy like Cloudflare Access).
+**Leave those unset and nothing changes** — that's the default, and the self-hosted story stays first-class: no sign-in, no external services beyond ESPN, one league at a time from `data/settings.json`. But in that mode there is **no authentication**, so anyone who can reach the URL gets full access to every league you've added and can spend your OpenRouter credits. Don't expose it to the open internet without putting something in front of it (a private network like Tailscale, or an identity proxy like Cloudflare Access) — or turn on accounts.
+
+Still missing for a real hosted deployment: stored ESPN cookies are not yet encrypted at rest, sync is still per-request rather than a shared worker, and there are no rate limits or token metering (Phases 4–6 of the plan).
 
 Worth knowing: ESPN publishes no official fantasy API. `espn-api` works against undocumented internal endpoints, so ESPN can change or block them without notice, and there's no "Sign in with ESPN" to integrate — private leagues require copying two cookies by hand.

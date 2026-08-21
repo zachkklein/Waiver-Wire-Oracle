@@ -1,5 +1,9 @@
 # Proxies ESPN team logos through the app, with an on-disk cache.
 #
+# This is the one endpoint that takes its token from the query string rather than an
+# Authorization header (LeagueFromUrlDep) — the browser reaches it through <img src>,
+# which can't carry headers.
+#
 # Two kinds of URL show up in teams.logo_url: ESPN's stock logo packs on g.espncdn.com
 # (public), and members' own uploads on mystique-api.fantasy.espn.com, which 401 without
 # the league's espn_s2/SWID cookies. The browser has neither and shouldn't be handed
@@ -13,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Response
 
 import config
 import db
-from api.deps import LeagueDep
+from api.deps import LeagueFromUrlDep
 from context import LeagueCtx
 
 router = APIRouter(prefix="/api", tags=["league"])
@@ -86,7 +90,7 @@ def _fetch(url: str, league: LeagueCtx) -> tuple[bytes, str]:
 
 
 @router.get("/team-logo/{team_id}")
-def get_team_logo(team_id: int, league: LeagueDep):
+def get_team_logo(team_id: int, league: LeagueFromUrlDep):
     league_id = league.key
     url = _lookup_logo_url(league_id, team_id)
     if not url:

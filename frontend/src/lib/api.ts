@@ -1,3 +1,4 @@
+import { authEnabled, authHeaders, cachedAccessToken } from "./auth"
 import type {
   ChatMsg,
   ChatStreamEvent,
@@ -22,7 +23,9 @@ async function getJSON<T>(path: string, params: Record<string, unknown> = {}): P
     if (value !== undefined && value !== null && value !== "") qs.set(key, String(value))
   }
   const query = qs.toString()
-  const res = await fetch(`/api${path}${query ? `?${query}` : ""}`)
+  const res = await fetch(`/api${path}${query ? `?${query}` : ""}`, {
+    headers: await authHeaders(),
+  })
   if (!res.ok) throw new Error(`${path} failed: ${res.status}`)
   return res.json()
 }
@@ -30,7 +33,7 @@ async function getJSON<T>(path: string, params: Record<string, unknown> = {}): P
 async function sendJSON<T>(method: "POST" | "PUT", path: string, body: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify(body),
   })
   if (!res.ok) {
@@ -42,7 +45,7 @@ async function sendJSON<T>(method: "POST" | "PUT", path: string, body: unknown):
 }
 
 async function sendEmpty<T>(method: "PUT" | "DELETE", path: string): Promise<T> {
-  const res = await fetch(`/api${path}`, { method })
+  const res = await fetch(`/api${path}`, { method, headers: await authHeaders() })
   if (!res.ok) {
     const detail = await res.json().catch(() => null)
     throw new Error(detail?.detail ?? `${path} failed: ${res.status}`)
@@ -93,15 +96,23 @@ export const api = {
 
 /** Team logos are served through the app rather than linked straight to ESPN: members'
  * own uploads live behind ESPN's auth cookies, which the browser doesn't have. A team
- * with no synced logo gets null so `TeamBadge` falls back to initials. */
+ * with no synced logo gets null so `TeamBadge` falls back to initials.
+ *
+ * This is the one endpoint whose token rides in the query string: the browser reaches it
+ * through `<img src>`, which can't carry an Authorization header. If the cached token has
+ * gone stale the image 401s and `TeamBadge` falls back to initials until the next render. */
 export function teamLogoUrl(teamId: number, logoUrl: string | null | undefined): string | null {
-  return logoUrl ? `/api/team-logo/${teamId}` : null
+  if (!logoUrl) return null
+  const token = authEnabled() ? cachedAccessToken() : null
+  return token
+    ? `/api/team-logo/${teamId}?access_token=${encodeURIComponent(token)}`
+    : `/api/team-logo/${teamId}`
 }
 
 export async function* streamChat(messages: ChatMsg[]): AsyncGenerator<ChatStreamEvent> {
   const res = await fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify({ messages }),
   })
   if (!res.ok || !res.body) throw new Error(`chat failed: ${res.status}`)
