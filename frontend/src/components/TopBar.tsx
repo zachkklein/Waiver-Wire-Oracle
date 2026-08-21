@@ -12,7 +12,7 @@ export default function TopBar({ meta }: { meta: Meta | null }) {
       <div className="flex items-center gap-3">
         <span className="hidden items-center gap-2 rounded-full bg-surface-raised px-3.5 py-2 text-xs font-medium text-text-muted sm:flex">
           <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-          Synced {timeAgo(meta?.synced_at.teams)}
+          Synced {timeAgo(meta?.synced_at)}
         </span>
 
         {meta?.self_team && (

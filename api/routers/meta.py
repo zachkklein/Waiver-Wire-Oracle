@@ -13,7 +13,7 @@ def _empty(has_data: bool = False) -> dict:
     return {
         "self_team": None,
         "current_week": None,
-        "synced_at": {"teams": None, "rosters": None, "matchups": None},
+        "synced_at": None,
         "player_stats_rows": 0,
         "configured": config.is_configured(),
         "has_data": has_data,
@@ -35,46 +35,65 @@ def get_meta(league: LeagueDep):
             # Possible when only stats or news have been synced so far.
             return _empty()
 
-        self_team = conn.execute(
-            "SELECT team_id, team_name, wins, losses, ties, logo_url FROM teams "
-            "WHERE league_id = ? AND is_self = 1 LIMIT 1",
-            (league_id,),
-        ).fetchone()
+        # Which team is "yours" comes from the request's league context, not from a
+        # column: teams rows are shared by everyone in the league.
+        try:
+            self_id = int(league.team_id) if league.team_id else None
+        except (TypeError, ValueError):
+            self_id = None
 
-        # One round trip for the five aggregates rather than five. The frontend refetches
+        self_team = (
+            conn.execute(
+                "SELECT team_id, team_name, wins, losses, ties, logo_url FROM teams "
+                "WHERE league_id = ? AND team_id = ? LIMIT 1",
+                (league_id, self_id),
+            ).fetchone()
+            if self_id is not None
+            else None
+        )
+
+        # One round trip for all of it rather than several. The frontend refetches
         # /api/meta on every navigation, and against a remote Postgres each round trip is
-        # real latency — five sequential ones made this the slowest endpoint in the app.
+        # real latency — sequential ones made this the slowest endpoint in the app.
+        #
+        # Sync freshness comes from leagues.last_synced_at: teams/rosters/matchups no
+        # longer carry a per-row updated_at, because one would rewrite every row on every
+        # sync. has_data asks whether teams rows exist rather than trusting a timestamp,
+        # so a database synced before that change still reports correctly.
         stats_expr = (
             "(SELECT COUNT(*) FROM player_stats)" if "player_stats" in tables else "0"
         )
+        leagues_expr = (
+            "(SELECT last_synced_at FROM leagues WHERE league_id = ?)"
+            if "leagues" in tables
+            else "NULL"
+        )
+        params = [league_id]
+        if "leagues" in tables:
+            params.append(league_id)
+        params.append(league_id)
+
         summary = conn.execute(
             f"""
             SELECT
                 (SELECT MAX(week) FROM matchups WHERE league_id = ?) AS current_week,
-                (SELECT MAX(updated_at) FROM teams WHERE league_id = ?) AS teams_at,
-                (SELECT MAX(updated_at) FROM rosters WHERE league_id = ?) AS rosters_at,
-                (SELECT MAX(updated_at) FROM matchups WHERE league_id = ?) AS matchups_at,
+                {leagues_expr} AS synced_at,
+                (SELECT COUNT(*) FROM teams WHERE league_id = ?) AS team_count,
                 {stats_expr} AS stats_rows
             """,
-            (league_id, league_id, league_id, league_id),
+            tuple(params),
         ).fetchone()
 
-        teams_synced_at = summary["teams_at"]
-        rosters_synced_at = summary["rosters_at"]
-        matchups_synced_at = summary["matchups_at"]
+        synced_at = summary["synced_at"]
         stats_row_count = summary["stats_rows"]
 
         return {
             "self_team": dict(self_team) if self_team else None,
             "current_week": summary["current_week"],
-            "synced_at": {
-                "teams": teams_synced_at,
-                "rosters": rosters_synced_at,
-                "matchups": matchups_synced_at,
-            },
+            "synced_at": synced_at,
             "player_stats_rows": stats_row_count,
             "configured": config.is_configured(),
-            "has_data": teams_synced_at is not None,
+            "has_data": summary["team_count"] > 0,
         }
     finally:
         conn.close()

@@ -32,10 +32,12 @@ export default function StandingsPage() {
   if (!teams) return <LoadingState />
 
   const diff = (t: Team) => t.points_for - t.points_against
+  // Every branch ends in a team_id tiebreak so the table can't shuffle between
+  // renders when teams are level — which they all are before week 1.
   const sorted = [...teams].sort((a, b) => {
-    if (sortKey === "wins") return b.wins - a.wins || b.points_for - a.points_for
-    if (sortKey === "diff") return diff(b) - diff(a)
-    return b[sortKey] - a[sortKey]
+    if (sortKey === "wins") return b.wins - a.wins || b.points_for - a.points_for || a.team_id - b.team_id
+    if (sortKey === "diff") return diff(b) - diff(a) || a.team_id - b.team_id
+    return b[sortKey] - a[sortKey] || a.team_id - b.team_id
   })
 
   return (

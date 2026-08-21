@@ -10,6 +10,7 @@ import nfl_data_py as nfl
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 import db
+from names import normalize_player_name
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS player_stats (
@@ -37,7 +38,7 @@ CREATE TABLE IF NOT EXISTS player_stats (
     fumbles_lost REAL,
     fantasy_points REAL,
     fantasy_points_ppr REAL,
-    updated_at TEXT,
+    updated_at TIMESTAMPTZ,
     PRIMARY KEY (player_id, season, week, season_type)
 );
 """
@@ -121,6 +122,56 @@ def sync_player_stats(conn, years: list[int]) -> int:
     return len(rows)
 
 
+def link_players(conn) -> tuple[int, int]:
+    """Fill in players.gsis_id by matching normalised names against player_stats.
+
+    This is the join that makes "how are the players on my roster performing?" a SQL
+    question. rosters.player_id is ESPN's id and player_stats.player_id is nflverse's
+    GSIS id, so without this link the two tables cannot be joined at all, and the app
+    falls back to matching name strings at query time — which silently missed 11 of 162
+    rostered players (Aaron Jones Sr. vs Aaron Jones, DJ Moore vs D.J. Moore, ...).
+
+    Only unambiguous matches are taken: exactly one player and exactly one GSIS id per
+    normalised name. Anything ambiguous is left NULL rather than risk attaching another
+    player's stats. Returns (linked_now, still_unlinked) so a caller can report it —
+    an unlinked player is a visible number here, not a silent hole in a query.
+    """
+    stats_rows = conn.execute(
+        "SELECT DISTINCT player_id, player_display_name FROM player_stats"
+    ).fetchall()
+
+    by_norm: dict[str, set] = {}
+    for row in stats_rows:
+        norm = normalize_player_name(row["player_display_name"])
+        if norm:
+            by_norm.setdefault(norm, set()).add(row["player_id"])
+
+    player_rows = conn.execute(
+        "SELECT player_id, normalized_name FROM players WHERE gsis_id IS NULL"
+    ).fetchall()
+
+    # A normalised name shared by two ESPN players is just as ambiguous as one shared
+    # by two nflverse players; skip both directions.
+    counts: dict[str, int] = {}
+    for row in conn.execute("SELECT normalized_name FROM players").fetchall():
+        counts[row["normalized_name"]] = counts.get(row["normalized_name"], 0) + 1
+
+    updates = []
+    for row in player_rows:
+        norm = row["normalized_name"]
+        candidates = by_norm.get(norm)
+        if candidates and len(candidates) == 1 and counts.get(norm, 0) == 1:
+            updates.append((next(iter(candidates)), row["player_id"]))
+
+    if updates:
+        conn.executemany("UPDATE players SET gsis_id = ? WHERE player_id = ?", updates)
+
+    unlinked = conn.execute(
+        "SELECT COUNT(*) AS c FROM players WHERE gsis_id IS NULL"
+    ).fetchone()["c"]
+    return len(updates), unlinked - len(updates) if updates else unlinked
+
+
 def run(years: list[int] | None = None, default_season: str | int | None = None) -> int:
     """Player stats are nflverse data, shared by every league — the only league-shaped
     input is which season to default to when no years are given."""
@@ -134,6 +185,9 @@ def run(years: list[int] | None = None, default_season: str | int | None = None)
     try:
         init_db(conn)
         row_count = sync_player_stats(conn, years)
+        # Fresh stats may name players we couldn't previously resolve, so re-link here
+        # rather than only at ingest of the ESPN side.
+        link_players(conn)
         conn.commit()
     finally:
         conn.close()

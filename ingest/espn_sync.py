@@ -9,12 +9,41 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 import db
 from context import LeagueCtx
+from names import normalize_player_name
 
+# `teams`/`rosters`/`matchups` are scoped to one league; `players` is global (an NFL
+# player is the same player in every league), as are player_stats and the news store.
+#
 # league_id is ESPN's own league id (as a string) — it's already globally unique, so it
 # doubles as the key that scopes teams/rosters/matchups to one of possibly several
 # configured leagues sharing this database. player_stats/news stay unscoped: they're
 # nflverse/RSS data, not tied to any one ESPN league.
 SCHEMA = """
+-- Player identity, stored once globally rather than once per league that rosters the
+-- player. gsis_id is nflverse's id, which is what makes rosters joinable to
+-- player_stats at all -- see names.py and stats_sync.link_players().
+CREATE TABLE IF NOT EXISTS players (
+    player_id BIGINT PRIMARY KEY,
+    gsis_id TEXT UNIQUE,
+    full_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    position TEXT,
+    pro_team TEXT,
+    updated_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS players_normalized_name_idx ON players (normalized_name);
+
+-- One row per ESPN league, shared by everyone in it. Carries the sync timestamp now
+-- that rosters has no per-row one. Postgres gets a richer definition (FKs from
+-- user_leagues) in supabase/migrations; IF NOT EXISTS leaves that alone.
+CREATE TABLE IF NOT EXISTS leagues (
+    league_id TEXT PRIMARY KEY,
+    season TEXT,
+    name TEXT,
+    last_synced_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS teams (
     league_id TEXT,
     team_id INTEGER,
@@ -24,24 +53,21 @@ CREATE TABLE IF NOT EXISTS teams (
     ties INTEGER,
     points_for REAL,
     points_against REAL,
-    is_self INTEGER,
     logo_url TEXT,
-    updated_at TEXT,
     PRIMARY KEY (league_id, team_id)
 );
 
+-- teams/rosters/matchups deliberately have no updated_at: a per-row sync stamp rewrites
+-- every row on every sync even when nothing changed, defeating the IS DISTINCT FROM
+-- guards on the upserts below. Sync freshness lives on leagues.last_synced_at.
 CREATE TABLE IF NOT EXISTS rosters (
     league_id TEXT,
     team_id INTEGER,
-    player_id INTEGER,
-    player_name TEXT,
-    position TEXT,
-    pro_team TEXT,
+    player_id BIGINT,
     lineup_slot TEXT,
     injury_status TEXT,
     total_points REAL,
     projected_total_points REAL,
-    updated_at TEXT,
     PRIMARY KEY (league_id, team_id, player_id)
 );
 
@@ -55,8 +81,6 @@ CREATE TABLE IF NOT EXISTS matchups (
     home_projected REAL,
     away_projected REAL,
     is_playoff INTEGER,
-    is_self INTEGER,
-    updated_at TEXT,
     PRIMARY KEY (league_id, week, home_team_id, away_team_id)
 );
 """
@@ -152,10 +176,9 @@ def find_self_team_id(league: League, ctx: LeagueCtx) -> int | None:
     return None
 
 
-def sync_teams(
-    conn, league: League, league_id: str, self_team_id: int | None
-) -> None:
-    now = datetime.now(timezone.utc).isoformat()
+def sync_teams(conn, league: League, league_id: str) -> None:
+    """Standings for every team. No is_self column: which team is "yours" is a property
+    of the viewer, not of the league, and these rows are shared by everyone in it."""
     rows = [
         (
             league_id,
@@ -166,17 +189,16 @@ def sync_teams(
             team.ties,
             team.points_for,
             team.points_against,
-            int(team.team_id == self_team_id),
             # espn-api leaves logo_url as "" for teams that never set one.
             getattr(team, "logo_url", None) or None,
-            now,
         )
         for team in league.teams
     ]
     conn.executemany(
         """
-        INSERT INTO teams (league_id, team_id, team_name, wins, losses, ties, points_for, points_against, is_self, logo_url, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO teams (league_id, team_id, team_name, wins, losses, ties,
+                           points_for, points_against, logo_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(league_id, team_id) DO UPDATE SET
             team_name=excluded.team_name,
             wins=excluded.wins,
@@ -184,58 +206,123 @@ def sync_teams(
             ties=excluded.ties,
             points_for=excluded.points_for,
             points_against=excluded.points_against,
-            is_self=excluded.is_self,
-            logo_url=excluded.logo_url,
-            updated_at=excluded.updated_at
+            logo_url=excluded.logo_url
+        WHERE teams.team_name      IS DISTINCT FROM excluded.team_name
+           OR teams.wins           IS DISTINCT FROM excluded.wins
+           OR teams.losses         IS DISTINCT FROM excluded.losses
+           OR teams.ties           IS DISTINCT FROM excluded.ties
+           OR teams.points_for     IS DISTINCT FROM excluded.points_for
+           OR teams.points_against IS DISTINCT FROM excluded.points_against
+           OR teams.logo_url       IS DISTINCT FROM excluded.logo_url
         """,
         rows,
     )
 
 
-def sync_roster(conn, team, league_id: str) -> None:
+def sync_players(conn, league: League) -> None:
+    """Upsert global player identity from every team's roster.
+
+    gsis_id is deliberately not touched here — ESPN doesn't know it. It's filled in by
+    stats_sync.link_players() from the nflverse side.
+    """
     now = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        "DELETE FROM rosters WHERE league_id = ? AND team_id = ?", (league_id, team.team_id)
+    seen: dict[int, tuple] = {}
+    for team in league.teams:
+        for player in team.roster:
+            seen[player.playerId] = (
+                player.playerId,
+                player.name,
+                normalize_player_name(player.name),
+                player.position,
+                player.proTeam,
+                now,
+            )
+
+    conn.executemany(
+        """
+        INSERT INTO players (player_id, full_name, normalized_name, position, pro_team, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(player_id) DO UPDATE SET
+            full_name=excluded.full_name,
+            normalized_name=excluded.normalized_name,
+            position=excluded.position,
+            pro_team=excluded.pro_team,
+            updated_at=excluded.updated_at
+        WHERE players.full_name IS DISTINCT FROM excluded.full_name
+           OR players.position  IS DISTINCT FROM excluded.position
+           OR players.pro_team  IS DISTINCT FROM excluded.pro_team
+        """,
+        list(seen.values()),
     )
+
+
+def sync_roster(conn, team, league_id: str) -> None:
+    """Upsert this team's roster, then remove only the players who actually left.
+
+    Not delete-then-insert. That rewrote every row on every sync — 200% tuple churn on
+    a table whose contents barely change — which at a few thousand leagues means tens of
+    millions of dead tuples a day and autovacuum falling behind. The WHERE on DO UPDATE
+    is what makes an unchanged roster cost zero writes; it only works because the table
+    has no per-row updated_at to invalidate it.
+    """
     rows = [
         (
             league_id,
             team.team_id,
             player.playerId,
-            player.name,
-            player.position,
-            player.proTeam,
             player.lineupSlot,
             player.injuryStatus,
             player.total_points,
             player.projected_total_points,
-            now,
         )
         for player in team.roster
     ]
+
     conn.executemany(
         """
         INSERT INTO rosters (
-            league_id, team_id, player_id, player_name, position, pro_team,
-            lineup_slot, injury_status, total_points, projected_total_points, updated_at
+            league_id, team_id, player_id, lineup_slot, injury_status,
+            total_points, projected_total_points
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(league_id, team_id, player_id) DO UPDATE SET
+            lineup_slot=excluded.lineup_slot,
+            injury_status=excluded.injury_status,
+            total_points=excluded.total_points,
+            projected_total_points=excluded.projected_total_points
+        WHERE rosters.lineup_slot            IS DISTINCT FROM excluded.lineup_slot
+           OR rosters.injury_status          IS DISTINCT FROM excluded.injury_status
+           OR rosters.total_points           IS DISTINCT FROM excluded.total_points
+           OR rosters.projected_total_points IS DISTINCT FROM excluded.projected_total_points
         """,
         rows,
     )
 
+    # Drop anyone no longer on the roster. Empty roster -> delete them all.
+    player_ids = [player.playerId for player in team.roster]
+    if player_ids:
+        placeholders = ", ".join("?" for _ in player_ids)
+        conn.execute(
+            f"DELETE FROM rosters WHERE league_id = ? AND team_id = ? "
+            f"AND player_id NOT IN ({placeholders})",
+            (league_id, team.team_id, *player_ids),
+        )
+    else:
+        conn.execute(
+            "DELETE FROM rosters WHERE league_id = ? AND team_id = ?",
+            (league_id, team.team_id),
+        )
 
-def sync_matchups(
-    conn, league: League, league_id: str, week: int, self_team_id: int | None
-) -> None:
-    now = datetime.now(timezone.utc).isoformat()
+
+def sync_matchups(conn, league: League, league_id: str, week: int) -> None:
+    """Every matchup in the week. Like teams, no is_self — "your matchup" is derived
+    per request from the caller's team id."""
     box_scores = league.box_scores(week=week)
 
     rows = []
     for box in box_scores:
         if box.home_team is None or box.away_team is None:
             continue  # bye week
-        is_self = self_team_id in (box.home_team.team_id, box.away_team.team_id)
         rows.append(
             (
                 league_id,
@@ -247,8 +334,6 @@ def sync_matchups(
                 box.home_projected,
                 box.away_projected,
                 int(box.is_playoff),
-                int(is_self),
-                now,
             )
         )
 
@@ -256,19 +341,42 @@ def sync_matchups(
         """
         INSERT INTO matchups (
             league_id, week, home_team_id, away_team_id, home_score, away_score,
-            home_projected, away_projected, is_playoff, is_self, updated_at
+            home_projected, away_projected, is_playoff
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(league_id, week, home_team_id, away_team_id) DO UPDATE SET
             home_score=excluded.home_score,
             away_score=excluded.away_score,
             home_projected=excluded.home_projected,
             away_projected=excluded.away_projected,
-            is_playoff=excluded.is_playoff,
-            is_self=excluded.is_self,
-            updated_at=excluded.updated_at
+            is_playoff=excluded.is_playoff
+        WHERE matchups.home_score     IS DISTINCT FROM excluded.home_score
+           OR matchups.away_score     IS DISTINCT FROM excluded.away_score
+           OR matchups.home_projected IS DISTINCT FROM excluded.home_projected
+           OR matchups.away_projected IS DISTINCT FROM excluded.away_projected
+           OR matchups.is_playoff     IS DISTINCT FROM excluded.is_playoff
         """,
         rows,
+    )
+
+
+def record_league_sync(conn, league_id: str, ctx: LeagueCtx) -> None:
+    """Stamp the league's freshness in one place.
+
+    This is where sync time lives now that rosters has no per-row updated_at, and it's
+    what Phase 5's "refresh only if stale" check will read.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        INSERT INTO leagues (league_id, season, name, last_synced_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(league_id) DO UPDATE SET
+            season = COALESCE(excluded.season, leagues.season),
+            name = COALESCE(excluded.name, leagues.name),
+            last_synced_at = excluded.last_synced_at
+        """,
+        (league_id, ctx.season, ctx.label, now),
     )
 
 
@@ -279,17 +387,23 @@ def run(ctx: LeagueCtx | None = None) -> None:
     self_team_id = find_self_team_id(league, ctx)
 
     config.sync_league_name(league_id, getattr(league.settings, "name", None))
+    # Persist whichever team we resolved as the user's, so queries can derive is_self
+    # without re-running SWID matching. In the hosted build this is user_leagues.espn_team_id.
+    config.sync_self_team_id(league_id, self_team_id)
 
     conn = db.connect()
     try:
         init_db(conn, league_id)
-        sync_teams(conn, league, league_id, self_team_id)
+        sync_teams(conn, league, league_id)
+        sync_players(conn, league)
 
         for team in league.teams:
             sync_roster(conn, team, league_id)
 
         for week in range(1, league.current_week + 1):
-            sync_matchups(conn, league, league_id, week, self_team_id)
+            sync_matchups(conn, league, league_id, week)
+
+        record_league_sync(conn, league_id, ctx)
         conn.commit()
     finally:
         conn.close()

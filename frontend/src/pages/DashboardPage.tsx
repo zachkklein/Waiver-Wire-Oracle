@@ -39,7 +39,11 @@ export default function DashboardPage() {
   if (!meta) return <LoadingState />
 
   const selfMatchup = matchups?.matchups.find((m) => m.is_self)
-  const ranked = [...(teams ?? [])].sort((a, b) => b.wins - a.wins || b.points_for - a.points_for)
+  // team_id breaks ties, matching the server's ORDER BY — without it a preseason
+  // league (all 0-0) has no stable order and ranks shuffle between loads.
+  const ranked = [...(teams ?? [])].sort(
+    (a, b) => b.wins - a.wins || b.points_for - a.points_for || a.team_id - b.team_id,
+  )
   const selfIndex = ranked.findIndex((t) => t.is_self)
   const selfRank = selfIndex + 1
   const selfTeam = ranked[selfIndex]

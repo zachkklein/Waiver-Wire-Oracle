@@ -101,7 +101,7 @@ export interface Meta {
     logo_url: string | null
   } | null
   current_week: number | null
-  synced_at: { teams: string | null; rosters: string | null; matchups: string | null }
+  synced_at: string | null
   player_stats_rows: number
   configured: boolean
   has_data: boolean

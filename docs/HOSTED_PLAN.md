@@ -200,6 +200,39 @@ Two things worth carrying into later phases:
   connections than the direct endpoint likes.
 - Round trips dominate, so prefer one query over several. `/api/meta` is the model.
 
+### Phase 2.5 — Schema fixes before auth locks the model in *(done)*
+
+Four problems, all of which get worse with more users and leagues.
+
+**Write churn was the real ceiling.** `sync_roster` did delete-then-insert per team, so
+every sync rewrote the whole table — measured at 324 inserts + 162 deletes on a 162-row
+table, 200% churn whether or not anything changed. At ~4,000 leagues on a 15-minute
+refresh that's ~77M dead tuples/day against 800K live rows, and autovacuum loses.
+Fixed with guarded upserts (`ON CONFLICT ... WHERE <col> IS DISTINCT FROM excluded.<col>`)
+plus deleting only departed players. The enabling change was dropping the per-row
+`updated_at` from `teams`/`rosters`/`matchups`: one would change every sync and defeat
+every guard. Freshness now lives in `leagues.last_synced_at`.
+
+Measured after: **a sync where nothing changed writes 0 tuples** across all four tables,
+down from 486 on `rosters` alone. Verified that genuine changes still get through.
+
+**`is_self` was a per-viewer flag on league-shared rows.** With two members of one league
+signed up, whoever synced last owned it. Both columns dropped; derived per request from
+`LeagueCtx.team_id`.
+
+**`players` dimension.** `rosters.player_id` is ESPN's id and `player_stats.player_id` is
+nflverse's GSIS id, so the two could not be joined at all — the app matched on name
+strings and silently missed 11 of 162 rostered players who were spelled differently
+("Aaron Jones Sr." vs "Aaron Jones"). `players` holds both ids; `names.py` +
+`stats_sync.link_players()` resolve the link once at ingest, taking only unambiguous
+matches. Joinable roster players went 97 → 108 of 162; the remainder are rookies with no
+prior-season data and K/D-ST, which nflverse's weekly data doesn't cover.
+
+**Also:** two indexes that duplicated a leftmost prefix of their table's PK, dropped;
+`timestamptz` instead of ISO strings; RLS enabled on the new `players` table (new tables
+don't inherit it); and a `team_id` tiebreak on every standings sort, without which a
+preseason league has no defined order and ranks shuffle between requests.
+
 ### Phase 3 — Auth and onboarding *(~2–3 days)*
 
 Supabase Auth (magic link or Google) issues a JWT; a FastAPI dependency verifies

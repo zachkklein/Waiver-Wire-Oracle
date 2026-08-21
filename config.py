@@ -264,6 +264,41 @@ def sync_league_name(league_id: str, name: str) -> None:
     _write_settings(data)
 
 
+def sync_self_team_id(league_id: str, team_id: int | None) -> None:
+    """Persist which team is the user's, as resolved during a sync.
+
+    `is_self` used to be a column on the shared `teams`/`matchups` rows, which broke as
+    soon as two members of the same league used the app — whoever synced last owned the
+    flag. It's now derived per request from `LeagueCtx.team_id`, so the resolved value
+    has to be stored somewhere the request can see it. Here that's settings.json; in the
+    hosted build it's `user_leagues.espn_team_id`, which is per-user by construction.
+
+    No-ops when nothing was resolved or the value already matches, so it doesn't rewrite
+    settings on every sync.
+    """
+    if team_id is None:
+        return
+
+    data = dict(_load_settings())
+    leagues = list(data.get("leagues") or [])
+    idx = next((i for i, e in enumerate(leagues) if e.get("ESPN_LEAGUE_ID") == league_id), None)
+
+    if idx is None:
+        implicit = _active_league()  # materialize the implicit env-based league, if it's this one
+        if implicit.get("ESPN_LEAGUE_ID") != league_id:
+            return
+        leagues = [dict(implicit)]
+        idx = 0
+        data.setdefault("active_league_id", league_id)
+
+    if str(leagues[idx].get("ESPN_TEAM_ID") or "") == str(team_id):
+        return
+
+    leagues[idx] = {**leagues[idx], "ESPN_TEAM_ID": str(team_id)}
+    data["leagues"] = leagues
+    _write_settings(data)
+
+
 def set_active_league(league_id: str) -> None:
     data = dict(_load_settings())
     leagues = list(data.get("leagues") or [])

@@ -2,7 +2,7 @@
 
 A personal fantasy football assistant that combines your ESPN league data, NFL player stats, and current NFL news into a chat agent you can ask roster, start/sit, and waiver-wire questions.
 
-It runs entirely locally — a Python backend backed by SQLite and a local vector store, with an LLM agent that answers questions by calling tools rather than guessing from training data. You can use it as a terminal chat agent or through a local web app (FastAPI + React) that adds a dashboard for your roster, matchups, standings, player stats, and news alongside the same chat agent, streamed and rendered as markdown.
+It runs entirely locally — a Python backend backed by SQLite (or Postgres, if you point it at one) and a local vector store, with an LLM agent that answers questions by calling tools rather than guessing from training data. You can use it as a terminal chat agent or through a local web app (FastAPI + React) that adds a dashboard for your roster, matchups, standings, player stats, and news alongside the same chat agent, streamed and rendered as markdown.
 
 It's built to be **self-hosted**: clone it, run it, and point it at your own league from a setup screen in the browser — no config files to edit, and your ESPN credentials never leave your machine. You can add more than one ESPN league and switch between them from a dropdown in the app; the Oracle's OpenRouter key and news feeds are shared across all of them.
 
@@ -12,7 +12,7 @@ Three ingest scripts pull data from external sources into local storage. Three t
 
 ```
 espn_sync.py   ──┐
-stats_sync.py  ──┼──▶  data/db.sqlite  (teams, rosters, matchups, player_stats)
+stats_sync.py  ──┼──▶  data/db.sqlite  (leagues, teams, rosters, matchups, players, player_stats)
                  │
 news_sync.py   ──┴──▶  data/chroma/   (embedded NFL news, for semantic search)
 
@@ -26,13 +26,13 @@ frontend/src   ──▶  React web app (dashboard + chat) that talks to api/*.p
 ```
 
 - **`ingest/espn_sync.py`** — pulls your league via [`espn-api`](https://github.com/cwendt94/espn-api): every team's roster, league standings, and the current week's matchups/box scores.
-- **`ingest/stats_sync.py`** — pulls weekly NFL player stats (yardage, TDs, targets, fantasy points) via [`nfl-data-py`](https://github.com/nflverse/nfl_data_py).
+- **`ingest/stats_sync.py`** — pulls weekly NFL player stats (yardage, TDs, targets, fantasy points) via [`nfl-data-py`](https://github.com/nflverse/nfl_data_py), then links them to ESPN's players. ESPN and nflverse use different player ids *and* spell names differently ("Aaron Jones Sr." vs "Aaron Jones", "DJ Moore" vs "D.J. Moore"), so a `players` table holds both ids and `stats_sync` resolves the link once at ingest — which is what makes "how are the players on my roster actually performing?" a single SQL join.
 - **`ingest/news_sync.py`** — pulls NFL news from RSS feeds, chunks it, and embeds it into a local [Chroma](https://www.trychroma.com/) vector store using Chroma's bundled local embedding model (no external embedding API needed). This is the RAG component: `search_news` retrieves relevant article snippets by semantic similarity, and the agent uses them as grounded context instead of relying on its own (possibly stale) knowledge.
 - **`agent/chat.py`** — a terminal chat loop. On each turn, the LLM decides whether it needs to call `query_stats`, `query_roster`, or `search_news`, executes the call, and reasons over the result before responding.
 - **`api/`** — a FastAPI app exposing the same tools as a JSON API (`/api/roster`, `/api/stats`, `/api/matchups`, `/api/teams`, `/api/news`, `/api/meta`), a streaming `/api/chat` endpoint that reuses `agent/chat.py`'s system prompt and tools, `/api/settings` + `/api/sync` behind the Setup page, and `/api/leagues` for adding/switching/removing leagues.
 - **`frontend/`** — a React + Vite + TypeScript app: a dashboard (your team, matchup, standings), roster/matchup/standings/player/news pages, an "Oracle" chat page that streams the agent's responses and renders them as markdown, a Setup page for connecting your league and running syncs, and a league switcher dropdown in the top bar for multi-league setups.
 
-All three ingest scripts are safe to re-run — they upsert rather than duplicate, so you can re-sync as often as you like (e.g. weekly, or before each waiver decision).
+All three ingest scripts are safe to re-run — they upsert rather than duplicate, so you can re-sync as often as you like (e.g. weekly, or before each waiver decision). A re-sync that finds nothing changed writes nothing at all: the upserts are guarded so unchanged rows are skipped entirely.
 
 ## Getting started
 
@@ -85,6 +85,26 @@ Your OpenRouter API key/model and RSS news feeds are **shared** across every lea
 ### Configuring without the UI
 
 Every setting also reads from environment variables / `.env`, which is handy for headless or container setups — copy `.env.example` to `.env` and fill in `ESPN_LEAGUE_ID`, `ESPN_SEASON`, `ESPN_SWID`, `ESPN_S2`, `ESPN_TEAM_ID`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `RSS_FEED_URLS` (comma-separated). Anything saved from the Setup page takes precedence over `.env`. `.env` only configures a single league (there's no `.env` equivalent for a second one — add it from the UI); a second league added from the UI is stored in `data/settings.json` even if your first one is still coming from `.env`. Set `DATA_DIR` to move the SQLite file, Chroma store, and settings somewhere else (e.g. a mounted volume).
+
+### Storage
+
+By default everything lives in one SQLite file (`data/db.sqlite`) plus a local Chroma
+store — no external services, which is the point of a clone-and-run install.
+
+Set `DATABASE_URL` to a Postgres connection string and the app uses Postgres instead.
+The SQL is written once and translated per backend (`db.py`), so both paths run the same
+queries. This is how the hosted deployment points at Supabase; the schema lives in
+`supabase/migrations/`, and `scripts/migrate_to_postgres.py` copies an existing SQLite
+database across (idempotently — it upserts on primary keys).
+
+Two things worth knowing if you do:
+
+- Expect it to feel slower in local development. Round trips to a cloud region are
+  ~100ms against ~1ms for a local file, so the app is much snappier with `DATABASE_URL`
+  unset. That gap disappears in a deployment where app and database share a region.
+- Use a **pooled** connection string if your provider offers one (Supabase: port 6543).
+  The app keeps its own connection pool, but a serverful deployment will still hold more
+  connections than a direct endpoint likes.
 
 ### Refreshing your data
 
@@ -146,13 +166,19 @@ Oracle:   [query_stats({"player_name": "Kenny Gainwell", ...})]
 waiver-wire-oracle/
 ├── .env                  # optional config for headless setups (gitignored)
 ├── config.py              # resolves settings: settings.json -> .env -> defaults
+├── config.py              # (above) also builds the per-request LeagueCtx/UserCtx
+├── context.py             # LeagueCtx / UserCtx — passed explicitly, never module globals
+├── db.py                  # SQLite or Postgres, chosen by DATABASE_URL
+├── names.py               # player-name normalisation (ESPN ↔ nflverse linking)
 ├── data/                  # all gitignored
 │   ├── settings.json       # written by the Setup page (leagues list, active league, API key)
-│   ├── db.sqlite           # teams/rosters/matchups (keyed by league_id), player_stats
+│   ├── db.sqlite           # leagues/teams/rosters/matchups (keyed by league_id), players, player_stats
+│   ├── logos/               # cached ESPN team logos
 │   └── chroma/              # embedded news vector store
+├── supabase/migrations/   # Postgres schema, for the hosted deployment
 ├── ingest/
-│   ├── espn_sync.py         # ESPN league → SQLite
-│   ├── stats_sync.py        # nflverse stats → SQLite
+│   ├── espn_sync.py         # ESPN league → database
+│   ├── stats_sync.py        # nflverse stats → database (+ links players to ESPN ids)
 │   └── news_sync.py         # RSS news → Chroma (RAG ingestion)
 ├── tools/
 │   ├── query_stats.py       # SQL lookup: player stats, weekly or aggregated
@@ -168,6 +194,8 @@ waiver-wire-oracle/
 │   ├── src/pages/               # Dashboard, Roster, Matchups, Standings, Players, News, Chat, Setup
 │   ├── src/components/          # shared UI (badges, cards, chat bubbles, markdown rendering)
 │   └── src/lib/                 # api.ts (fetch wrappers), types.ts
+├── scripts/
+│   └── migrate_to_postgres.py  # copy an existing SQLite database into Postgres
 └── main.py                   # CLI entrypoint (sync, chat, serve subcommands)
 ```
 
@@ -176,6 +204,8 @@ Each `tools/*.py` file also works as a standalone CLI for testing — run any of
 ## Status
 
 This is an active personal project, built to be cloned and self-hosted. Currently implemented: ESPN/stats/news ingestion, SQL and vector-search query tools, a terminal chat agent, a unified `main.py` CLI, a local web app (FastAPI + React) covering the dashboard, roster, matchups, standings, players, news, and a streaming chat page, an in-app Setup page so a fresh clone can be configured entirely from the browser, and support for multiple ESPN leagues (add/switch/remove from a top-bar dropdown) against the same install.
+
+Also runs on Postgres (`DATABASE_URL`), with the schema in `supabase/migrations/` — groundwork for a hosted multi-user version, tracked in `docs/HOSTED_PLAN.md`.
 
 Not built, by design: there's **no authentication and no multi-user support** — it assumes one person running one copy, and anyone who can reach the URL gets full access to every league you've added and can spend your OpenRouter credits. Multiple *leagues* are supported, but not multiple *users*: only one league is "active" (queried/chatted-about) at a time, and there's no per-visitor session, so everyone hitting the URL sees and switches the same active league. Don't expose it to the open internet without putting something in front of it (a private network like Tailscale, or an identity proxy like Cloudflare Access).
 
