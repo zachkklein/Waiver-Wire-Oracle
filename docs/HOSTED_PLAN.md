@@ -330,6 +330,50 @@ and any stored OpenRouter key. Keep the `has_*` boolean pattern
 
 **Done when:** a database dump contains no plaintext credentials.
 
+**Status: done.** `secretbox.py` — AES-256-GCM, one random nonce per value, key from
+`SECRET_ENCRYPTION_KEY`. `store.py` is still the only module that touches a stored
+credential; the four helpers it gained (`_seal_league`/`_unseal_league`,
+`_seal_user_key`/`_unseal_user_key`) are the whole integration, because the `*_enc`
+columns were named for this from Phase 2.
+
+Three decisions worth keeping:
+
+- **Ciphertext is bound to the row and column it lives in** (`user_leagues:<column>:
+  <user_id>:<league_id>`, as GCM additional data). Encryption alone protects a dump;
+  it does nothing against someone who can *write* to the database, who could otherwise
+  copy another user's `espn_s2` ciphertext into their own row and have the server call
+  ESPN with it — a real path given that Phase 3's tenancy hole means the `user_leagues`
+  row *is* the authorization decision. The cost is that moving a credential between rows
+  now means re-encrypting it, which the league-switch branch of `_db_save_settings` does.
+- **The server refuses to start with accounts on and no key.** The alternative is a
+  deployment that looks healthy while writing strangers' ESPN session cookies in
+  plaintext. Same shape as the existing `DATABASE_URL` check: fail once, loudly.
+- **Values carry a key fingerprint** (`v1.<kid>.<payload>`), and `SECRET_ENCRYPTION_KEY`
+  accepts a comma-separated list where only the first encrypts. That turns rotation into
+  a finite, checkable job — prepend the new key, redeploy, run
+  `scripts/encrypt_secrets.py`, drop the old one — rather than a flag day. The same
+  script backfills pre-Phase-4 plaintext, which `unseal()` keeps reading in the meantime.
+
+Only the account store is encrypted. A self-hosted `data/settings.json` stays plaintext
+deliberately: the key would sit in `.env` next to it, on the same machine, under the same
+user, so it would protect nothing. The threat this addresses is a copy of the *database*
+turning up without the application's environment.
+
+Verified end to end (SQLite standing in for the account tables, exercising the real
+`store.py` paths): saving a league writes `v1....` ciphertext and a full `.dump` of the
+database contains none of the four credentials; `LeagueCtx.swid`/`.s2`, `espn_cookies`
+and `UserCtx.openrouter_api_key` all come back correct; `has_*` and the "omit the secret
+to keep it" save path are unchanged; pasting one user's ciphertext into another's row (or
+into the other cookie's column) is refused rather than decrypted; a pre-Phase-4 plaintext
+row keeps working, is picked up by the backfill script, and a second run is a no-op; a
+full key rotation re-encrypts all five slots and the old key can then be dropped. Startup
+refuses accounts-without-a-key and accounts-with-a-malformed-key, and the self-hosted app
+still 200s on every endpoint with no key set at all.
+
+Note for Phase 5: the sync worker will pick credentials from a linked user's row, so it
+decrypts with that row's address — it can't cache one user's plaintext and reuse it under
+another `user_leagues` row.
+
 ### Phase 5 — Real sync *(~2 days)*
 
 Move off `BackgroundTasks` to a worker with a per-league lock. Sync once per

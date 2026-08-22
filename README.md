@@ -106,6 +106,17 @@ Two things worth knowing if you do:
   The app keeps its own connection pool, but a serverful deployment will still hold more
   connections than a direct endpoint likes.
 
+With accounts turned on, each user's ESPN cookies and OpenRouter key are encrypted before
+they're stored (AES-256-GCM), so a database dump holds no usable credentials. Generate the
+key with `python3 secretbox.py` and set it as `SECRET_ENCRYPTION_KEY` — the server won't
+start with accounts on and no key. To rotate, put the new key first and keep the old one
+after it (`SECRET_ENCRYPTION_KEY=new,old`), redeploy, run
+`python3 scripts/encrypt_secrets.py`, then drop the old key. The same script encrypts any
+credentials stored before this existed.
+
+A self-hosted install keeps `data/settings.json` in plaintext on purpose: the key would
+live in `.env` next to it, on your own machine, so encrypting it would protect nothing.
+
 ### Refreshing your data
 
 Re-sync whenever you want fresher data — weekly, or before each waiver decision. Either hit **Sync everything** on the Setup page, or use the CLI:
@@ -170,6 +181,7 @@ waiver-wire-oracle/
 ├── context.py             # LeagueCtx / UserCtx — passed explicitly, never module globals
 ├── auth.py                # who is asking: Supabase JWT, or the single local user
 ├── store.py               # where their leagues live: settings.json, or user_leagues
+├── secretbox.py           # encrypts stored credentials (accounts only; AES-256-GCM)
 ├── db.py                  # SQLite or Postgres, chosen by DATABASE_URL
 ├── names.py               # player-name normalisation (ESPN ↔ nflverse linking)
 ├── data/                  # all gitignored
@@ -199,7 +211,8 @@ waiver-wire-oracle/
 │   ├── src/auth/                # sign-in screen and gate (only when accounts are on)
 │   └── src/lib/                 # api.ts (fetch wrappers), auth.ts, types.ts
 ├── scripts/
-│   └── migrate_to_postgres.py  # copy an existing SQLite database into Postgres
+│   ├── migrate_to_postgres.py  # copy an existing SQLite database into Postgres
+│   └── encrypt_secrets.py      # encrypt/re-key stored credentials (backfill + rotation)
 └── main.py                   # CLI entrypoint (sync, chat, serve subcommands)
 ```
 
@@ -213,6 +226,6 @@ Also runs on Postgres (`DATABASE_URL`), with the schema in `supabase/migrations/
 
 **Leave those unset and nothing changes** — that's the default, and the self-hosted story stays first-class: no sign-in, no external services beyond ESPN, one league at a time from `data/settings.json`. But in that mode there is **no authentication**, so anyone who can reach the URL gets full access to every league you've added and can spend your OpenRouter credits. Don't expose it to the open internet without putting something in front of it (a private network like Tailscale, or an identity proxy like Cloudflare Access) — or turn on accounts.
 
-Still missing for a real hosted deployment: stored ESPN cookies are not yet encrypted at rest, sync is still per-request rather than a shared worker, and there are no rate limits or token metering (Phases 4–6 of the plan).
+With accounts on, stored ESPN cookies and OpenRouter keys are encrypted at rest (AES-256-GCM, key from `SECRET_ENCRYPTION_KEY` — the server refuses to start without one). Still missing for a real hosted deployment: sync is per-request rather than a shared worker, and there are no rate limits or token metering (Phases 5–6 of the plan).
 
 Worth knowing: ESPN publishes no official fantasy API. `espn-api` works against undocumented internal endpoints, so ESPN can change or block them without notice, and there's no "Sign in with ESPN" to integrate — private leagues require copying two cookies by hand.

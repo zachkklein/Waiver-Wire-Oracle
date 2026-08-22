@@ -8,3 +8,4 @@ fastapi
 uvicorn[standard]
 psycopg[binary,pool]
 pyjwt[crypto]
+cryptography

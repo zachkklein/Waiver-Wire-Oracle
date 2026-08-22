@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 import auth
 import config
 import db
+import secretbox
 from api.routers import auth as auth_router
 from api.routers import chat, league, leagues, logos, meta, news, settings, stats
 
@@ -23,6 +24,10 @@ def _check_config() -> None:
     # Reject a legacy Supabase key here rather than letting it quietly work.
     auth.check_config()
 
+    # Same for a malformed encryption key: fail now, not on the first user who saves an
+    # ESPN cookie.
+    secretbox.check_config()
+
     # Accounts live in Postgres tables created by supabase/migrations. Sitting on the
     # local SQLite file with auth switched on would fail later, per request, with a
     # missing-table error — say so once, at startup, instead.
@@ -31,6 +36,18 @@ def _check_config() -> None:
             "SUPABASE_URL is set, so this deployment has accounts — but DATABASE_URL "
             "isn't, so it would be storing them in the local data/db.sqlite file. Point "
             "DATABASE_URL at Postgres, or unset SUPABASE_URL to run single-user."
+        )
+
+    # With accounts, the database holds other people's ESPN session cookies. There is no
+    # mode where those get written in the clear -- refusing to boot is the only way to
+    # keep that true, since the alternative is a deployment that looks fine and quietly
+    # isn't (Phase 4, docs/HOSTED_PLAN.md).
+    if auth.is_enabled() and not secretbox.is_configured():
+        raise RuntimeError(
+            "SUPABASE_URL is set, so this deployment stores users' ESPN cookies — but "
+            f"{secretbox.ENV_VAR} isn't set, so they'd be stored in plaintext. Generate "
+            "a key with `python3 secretbox.py` and set it in the environment. Existing "
+            "plaintext rows are encrypted by `python3 scripts/encrypt_secrets.py`."
         )
 
 

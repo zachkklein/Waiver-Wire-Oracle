@@ -16,14 +16,16 @@ Every function takes a ``Principal`` first, for the same reason every tool takes
 This module is the *only* place allowed to branch on which of the two it is — routers,
 tools, and ingests just receive a context.
 
-Secrets (``espn_swid_enc``, ``espn_s2_enc``, ``openrouter_key_enc``) are written in the
-clear for now; the columns are named for the ciphertext that Phase 4 puts in them. Read
-and write them only through :func:`_secret` / the writers here, so that change is
-confined to this file.
+Secrets (``espn_swid_enc``, ``espn_s2_enc``, ``openrouter_key_enc``) hold AES-GCM
+ciphertext — see :mod:`secretbox`. Read and write them only through the four helpers
+below, which bind each value to the row and column it belongs in; a credential moved to
+another row will not decrypt. Nothing outside this module handles a stored secret in
+either form.
 """
 
 import config
 import db
+import secretbox
 from auth import Principal
 from context import LeagueCtx, UserCtx
 
@@ -37,14 +39,37 @@ class StoreError(Exception):
 # --------------------------------------------------------------------------------------
 
 
-def _secret(value):
-    """Unwrap a stored credential. Phase 4 decrypts here."""
-    return value or None
+def _league_aad(user_id: str, league_id: str, column: str) -> str:
+    """The address a user_leagues credential is encrypted for.
+
+    Included as AES-GCM additional data, so ciphertext only decrypts in the row and
+    column it was written to. Without it, anyone able to write to the database could copy
+    another user's ``espn_s2`` into their own row and have the server use it for them.
+    """
+    return f"user_leagues:{column}:{user_id}:{league_id}"
 
 
-def _seal(value):
-    """Wrap a credential for storage. Phase 4 encrypts here."""
-    return value or None
+def _user_aad(user_id: str) -> str:
+    return f"user_settings:openrouter_key_enc:{user_id}"
+
+
+def _unseal_league(row, column: str) -> str | None:
+    """Decrypt a credential off a user_leagues row, which carries its own address."""
+    return secretbox.unseal(
+        row[column], aad=_league_aad(row["user_id"], row["league_id"], column)
+    )
+
+
+def _seal_league(value, user_id: str, league_id: str, column: str) -> str | None:
+    return secretbox.seal(value, aad=_league_aad(user_id, league_id, column))
+
+
+def _unseal_user_key(user_id: str, value) -> str | None:
+    return secretbox.unseal(value, aad=_user_aad(user_id))
+
+
+def _seal_user_key(value, user_id: str) -> str | None:
+    return secretbox.seal(value, aad=_user_aad(user_id))
 
 
 def ensure_account(principal: Principal) -> None:
@@ -69,7 +94,7 @@ def ensure_account(principal: Principal) -> None:
 
 
 _LEAGUE_COLUMNS = """
-    ul.league_id, ul.espn_team_id, ul.espn_swid_enc, ul.espn_s2_enc,
+    ul.user_id, ul.league_id, ul.espn_team_id, ul.espn_swid_enc, ul.espn_s2_enc,
     ul.label AS user_label, ul.is_default, l.season, l.name AS league_name
 """
 
@@ -101,8 +126,8 @@ def _ctx_from_row(row) -> LeagueCtx:
     return LeagueCtx(
         league_id=row["league_id"],
         season=row["season"],
-        swid=_secret(row["espn_swid_enc"]),
-        s2=_secret(row["espn_s2_enc"]),
+        swid=_unseal_league(row, "espn_swid_enc"),
+        s2=_unseal_league(row, "espn_s2_enc"),
         team_id=row["espn_team_id"],
         # ESPN's own name first: this is display text shared by everyone in the league,
         # whereas user_label is one person's rename of it.
@@ -128,7 +153,7 @@ def _db_load_user_ctx(principal: Principal) -> UserCtx:
             (principal.user_id,),
         ).fetchone()
 
-    key = _secret(row["openrouter_key_enc"]) if row else None
+    key = _unseal_user_key(principal.user_id, row["openrouter_key_enc"]) if row else None
     model = (row["openrouter_model"] if row else None) or None
     return UserCtx(
         openrouter_api_key=key or config.shared_openrouter_key(),
@@ -238,8 +263,8 @@ def _db_add_league(principal: Principal, values: dict) -> None:
                 user_id,
                 league_id,
                 values.get("ESPN_TEAM_ID"),
-                _seal(values.get("ESPN_SWID")),
-                _seal(values.get("ESPN_S2")),
+                _seal_league(values.get("ESPN_SWID"), user_id, league_id, "espn_swid_enc"),
+                _seal_league(values.get("ESPN_S2"), user_id, league_id, "espn_s2_enc"),
                 values.get("label"),
             ),
         )
@@ -269,8 +294,12 @@ def _db_save_settings(principal: Principal, values: dict) -> None:
                     (user_id, row["league_id"]),
                 )
             merged = {
-                "ESPN_SWID": values.get("ESPN_SWID") or (row and _secret(row["espn_swid_enc"])),
-                "ESPN_S2": values.get("ESPN_S2") or (row and _secret(row["espn_s2_enc"])),
+                # Carried across to the new row, so they're decrypted under the old
+                # league's address here and re-encrypted under the new one below.
+                "ESPN_SWID": values.get("ESPN_SWID")
+                or (row and _unseal_league(row, "espn_swid_enc")),
+                "ESPN_S2": values.get("ESPN_S2")
+                or (row and _unseal_league(row, "espn_s2_enc")),
                 **{k: v for k, v in values.items() if v is not None},
             }
             _upsert_league(conn, league_id, merged.get("ESPN_SEASON"))
@@ -285,8 +314,8 @@ def _db_save_settings(principal: Principal, values: dict) -> None:
                     user_id,
                     league_id,
                     merged.get("ESPN_TEAM_ID"),
-                    _seal(merged.get("ESPN_SWID")),
-                    _seal(merged.get("ESPN_S2")),
+                    _seal_league(merged.get("ESPN_SWID"), user_id, league_id, "espn_swid_enc"),
+                    _seal_league(merged.get("ESPN_S2"), user_id, league_id, "espn_s2_enc"),
                     merged.get("label"),
                 ),
             )
@@ -297,8 +326,12 @@ def _db_save_settings(principal: Principal, values: dict) -> None:
 
             updates = {
                 "espn_team_id": values.get("ESPN_TEAM_ID"),
-                "espn_swid_enc": _seal(values.get("ESPN_SWID")),
-                "espn_s2_enc": _seal(values.get("ESPN_S2")),
+                "espn_swid_enc": _seal_league(
+                    values.get("ESPN_SWID"), user_id, row["league_id"], "espn_swid_enc"
+                ),
+                "espn_s2_enc": _seal_league(
+                    values.get("ESPN_S2"), user_id, row["league_id"], "espn_s2_enc"
+                ),
                 "label": values.get("label"),
             }
             updates = {k: v for k, v in updates.items() if v is not None}
@@ -326,7 +359,7 @@ def _db_save_settings(principal: Principal, values: dict) -> None:
                     openrouter_model =
                         COALESCE(excluded.openrouter_model, user_settings.openrouter_model)
                 """,
-                (user_id, _seal(key), model),
+                (user_id, _seal_user_key(key, user_id), model),
             )
 
 
